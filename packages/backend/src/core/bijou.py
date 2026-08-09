@@ -4406,12 +4406,34 @@ Use `/quiet` to reduce my chattiness!
         )
         if mm_key:
             mm_models = os.getenv("MINIMAX_MODELS", "MiniMax-M3,MiniMax-M2.7").split(",")
-            try:
-                from openai import OpenAI
-
-                mm_client = OpenAI(base_url=mm_endpoint, api_key=mm_key)
-                for mm_model in [m.strip() for m in mm_models if m.strip()]:
-                    try:
+            # Build the per-request user context for tool dispatch. tenant_id is
+            # already on the envelope (client_config), so we just thread it
+            # through to _call_function via the OpenAI tool-calling path.
+            mm_user_context = {
+                "tenant_id": client_config.get("tenant_id") if client_config else None,
+            }
+            for mm_model in [m.strip() for m in mm_models if m.strip()]:
+                try:
+                    # Use the FunctionCaller's OpenAI-compatible path so
+                    # MiniMax gets the same 11 function declarations Gemini
+                    # gets. Falls back to the plain path if FunctionCaller
+                    # is not enabled / not initialized.
+                    fc = getattr(self, "function_caller", None)
+                    if fc and getattr(fc, "enabled", False):
+                        content = await fc.call_with_openai_tools(
+                            messages=list(_messages),
+                            model=mm_model,
+                            api_key=mm_key,
+                            base_url=mm_endpoint,
+                            temperature=0.7,
+                            max_tokens=1024,
+                            user_context=mm_user_context,
+                        )
+                    else:
+                        # No function caller (or disabled) — keep the old
+                        # text-only path so the agent still responds.
+                        from openai import OpenAI
+                        mm_client = OpenAI(base_url=mm_endpoint, api_key=mm_key)
                         resp = mm_client.chat.completions.create(
                             model=mm_model,
                             messages=_messages,
@@ -4419,20 +4441,17 @@ Use `/quiet` to reduce my chattiness!
                             max_tokens=1024,
                         )
                         content = (resp.choices[0].message.content or "").strip()
-                        if content:
-                            # Strip MiniMax M2.7 <think>...</think> leaks (M3 doesn't emit them).
-                            import re
-                            content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
-                            if content:
-                                logger.info(
-                                    f"✅ Response via MiniMax ({getattr(resp, 'model', None) or mm_model})"
-                                )
-                                return content
-                    except Exception as model_err:
-                        logger.warning(f"⚠️ MiniMax model {mm_model} failed: {model_err}")
-                        continue
-            except Exception as mm_err:
-                logger.warning(f"⚠️ MiniMax provider failed entirely: {mm_err}")
+                        import re
+                        content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
+                    if content:
+                        logger.info(
+                            f"✅ Response via MiniMax ({mm_model})"
+                            + (" + tool calls" if fc and getattr(fc, "enabled", False) else "")
+                        )
+                        return content
+                except Exception as model_err:
+                    logger.warning(f"⚠️ MiniMax model {mm_model} failed: {model_err}")
+                    continue
         # === END MiniMax PRIMARY ===
 
         # Try Gemini 2.5 Flash (with RoundRobinRotator for 429 handling)

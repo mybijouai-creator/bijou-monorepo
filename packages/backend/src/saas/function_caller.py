@@ -382,6 +382,142 @@ class FunctionCaller:
 
         return functions
 
+    def get_openai_tools(self) -> List[Dict[str, Any]]:
+        """
+        Return function declarations in OpenAI tools format.
+
+        OpenAI's tools schema wraps each Gemini declaration in
+        {"type": "function", "function": {...}}. The inner shape is
+        otherwise identical (name, description, parameters with type/object
+        + properties + required), so this is a near-mechanical conversion.
+        OpenAI-compatible providers (MiniMax, OpenAI, Groq, Together, etc.)
+        all accept this format.
+        """
+        out: List[Dict[str, Any]] = []
+        for fn in self.get_function_declarations():
+            out.append({
+                "type": "function",
+                "function": {
+                    "name": fn["name"],
+                    "description": fn.get("description", ""),
+                    "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+                },
+            })
+        return out
+
+    async def call_with_openai_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        model: str,
+        api_key: str,
+        base_url: str = "https://api.minimax.io/v1",
+        max_iterations: int = 5,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        user_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Drive an OpenAI-compatible chat completion with function calling.
+
+        Sends the conversation; if the model returns tool_calls, dispatches
+        each via _call_function, sends the results back, and loops. Stops
+        when the model returns a plain text response (no tool_calls) or
+        after max_iterations tool rounds (defensive cap so a runaway model
+        can't loop forever).
+
+        The returned string is the final assistant content (stripped of
+        any <think>...</think> leaks from MiniMax M2.7).
+
+        Compatibility: works with any OpenAI-compatible endpoint that
+        supports the `tools` parameter — MiniMax M3, OpenAI gpt-4o-mini,
+        Groq, Together, etc. Tested against MiniMax.
+        """
+        from openai import OpenAI
+        import re as _re
+
+        if not api_key:
+            raise ValueError("call_with_openai_tools: api_key is required")
+        if user_context is None:
+            user_context = {}
+
+        client = OpenAI(base_url=base_url, api_key=api_key)
+        tools = self.get_openai_tools() or None
+
+        for _round in range(max_iterations):
+            try:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            except Exception as e:
+                logger.error(f"❌ OpenAI-compat call failed for {model}: {e}")
+                # Re-raise so the caller can decide whether to fall through
+                # to another provider.
+                raise
+
+            if not resp.choices:
+                logger.warning(f"⚠️ {model} returned no choices")
+                return ""
+            msg = resp.choices[0].message
+
+            # If no tool_calls, we have the final answer.
+            if not getattr(msg, "tool_calls", None):
+                content = (msg.content or "").strip()
+                # Strip MiniMax M2.7 <think>...</think> leaks (M3 doesn't emit them).
+                content = _re.sub(r"<think>.*?</think>\s*", "", content, flags=_re.DOTALL).strip()
+                if content:
+                    logger.info(
+                        f"✅ Response via {model} (round {_round + 1}) "
+                        f"[{len(content)} chars]"
+                    )
+                return content
+
+            # Otherwise: append the assistant message (with tool_calls),
+            # execute each tool, and feed the results back.
+            tool_calls = msg.tool_calls
+            messages.append(msg)  # OpenAI SDK serializes this for the next call
+            logger.info(
+                f"🔧 {model} requested {len(tool_calls)} tool call(s): "
+                + ", ".join(tc.function.name for tc in tool_calls)
+            )
+
+            for tc in tool_calls:
+                name = tc.function.name
+                raw_args = tc.function.arguments or "{}"
+                try:
+                    args = json.loads(raw_args) if raw_args else {}
+                except Exception as parse_err:
+                    logger.warning(
+                        f"⚠️ {model} sent unparseable args for {name}: {raw_args!r} ({parse_err})"
+                    )
+                    args = {}
+
+                try:
+                    result = await self._call_function(name, args, user_context)
+                except Exception as tool_err:
+                    logger.error(f"❌ Tool {name} raised: {tool_err}")
+                    result = {"success": False, "error": str(tool_err)}
+
+                # OpenAI requires the tool message to echo the tool_call_id
+                # and to have a string content (not a dict).
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": name,
+                    "content": json.dumps(result, default=str)[:32000],
+                })
+
+        logger.warning(f"⚠️ {model} hit max_iterations={max_iterations} without a final text reply")
+        # Try to extract the last assistant content if present, else give up.
+        for m in reversed(messages):
+            if m.get("role") == "assistant" and m.get("content"):
+                return (m["content"] or "").strip()
+        return "[tool-calling loop reached the iteration limit without a final answer]"
+
     # =========================================================================
     # WEB TOOLS (provider-agnostic, no API key required)
     # =========================================================================
