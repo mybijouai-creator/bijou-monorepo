@@ -38,10 +38,16 @@ class LoginRequest(BaseModel):
     password: str
 
 class AuthResponse(BaseModel):
-    access_token: str
-    refresh_token: str
+    # This project has email confirmation ON (GoTrue mailer_autoconfirm=false),
+    # so a *successful* signup legitimately has no session yet — the tokens
+    # only exist after the user clicks the verification link. Tokens must
+    # therefore be optional, otherwise "created, awaiting verification" is not
+    # representable and the endpoint is forced to report success as an error.
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
     user: dict
     tenant_id: str
+    email_confirmation_required: bool = False
 
 class RefreshRequest(BaseModel):
     refresh_token: str
@@ -145,11 +151,27 @@ async def signup(request: SignupRequest):
         # either returning the existing user or raising AuthApiError.
         # We catch this here so the dashboard gets a clean 409 instead
         # of cascading into a 23503 FK violation on tenant_users.
-        if not getattr(auth_response, "session", None):
+        # 2026-08-10 FIX: `session is None` is NOT a valid signal for this.
+        # With email confirmation enabled (this project: GoTrue
+        # mailer_autoconfirm=false), a brand-new, perfectly successful signup
+        # ALSO returns session=None — the session only appears after the user
+        # clicks the verification link. The old check therefore rejected 100%
+        # of new registrations with "account already exists", and left an
+        # orphaned auth.users row with no tenant, so the user could neither
+        # register nor log in. Both directions dead-ended.
+        #
+        # The correct discriminator is GoTrue's obfuscated-response contract:
+        # for an email that already exists it returns identities == [], while
+        # a genuinely new user gets exactly one identity. Only treat an
+        # explicitly EMPTY list as "already exists" — if the attribute is
+        # missing on some client version, fall through and let the signup
+        # proceed rather than re-introducing a block-everyone failure.
+        identities = getattr(auth_response.user, "identities", None)
+        if isinstance(identities, list) and len(identities) == 0:
             logger.info(
-                "Signup returned user %s but no session for %s — email "
+                "Signup for %s returned a user with no identities — email "
                 "already exists in auth.users; returning 409.",
-                user_id, request.email,
+                request.email,
             )
             raise HTTPException(
                 status_code=409,
@@ -337,34 +359,27 @@ async def signup(request: SignupRequest):
         # 'access_token'` and turned a real UX signal into a 500. We
         # now roll back the dangling tenant we just created and surface
         # an honest 409/403.
+        # 2026-08-10 FIX: a missing session here means "email confirmation
+        # pending", NOT "email already exists" — the already-exists case was
+        # ruled out at step 1a via the identities check. The old code deleted
+        # the auth user AND the tenant we just created and returned 409, which
+        # destroyed every legitimate signup.
+        #
+        # Keep both rows. The user verifies by email, then logs in normally
+        # and _resolve_or_link_tenant finds the tenant we persisted here.
         session = getattr(auth_response, "session", None)
         if not session or not getattr(session, "access_token", None):
-            logger.warning(
-                "Signup returned user %s but no session (email exists or unconfirmed) for %s",
-                user_id, request.email,
+            logger.info(
+                "Signup for %s created tenant %s; awaiting email confirmation "
+                "(no session issued yet).",
+                request.email, tenant_id,
             )
-            try:
-                db.auth.admin.delete_user(user_id)
-            except Exception as cleanup_err:
-                logger.warning(
-                    "Could not clean up auth user %s after missing session: %s",
-                    user_id, cleanup_err,
-                )
-            if tenant_id:
-                try:
-                    db.table("tenants").delete().eq("id", tenant_id).execute()
-                except Exception as tenant_cleanup_err:
-                    logger.warning(
-                        "Could not clean up tenant %s after missing session: %s",
-                        tenant_id, tenant_cleanup_err,
-                    )
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "An account with this email already exists. "
-                    "Please sign in instead, or use the password-reset link "
-                    "if you don't remember your password."
-                ),
+            return AuthResponse(
+                access_token=None,
+                refresh_token=None,
+                user={"id": user_id, "email": request.email},
+                tenant_id=tenant_id,
+                email_confirmation_required=True,
             )
 
         return AuthResponse(
@@ -372,6 +387,7 @@ async def signup(request: SignupRequest):
             refresh_token=session.refresh_token,
             user={"id": user_id, "email": request.email},
             tenant_id=tenant_id,
+            email_confirmation_required=False,
         )
 
     except HTTPException:

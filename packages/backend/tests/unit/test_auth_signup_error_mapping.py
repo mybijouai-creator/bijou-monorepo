@@ -236,3 +236,74 @@ async def test_signup_unknown_error_returns_500_with_ref():
                 ))
     assert ei.value.status_code == 500
     assert "ref: ValueError" in ei.value.detail
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Regression: email-confirmation-pending must NOT be reported as
+# "account already exists" (the 2026-08-10 signup outage).
+#
+# This project runs with GoTrue mailer_autoconfirm=false, so a brand-new
+# successful signup returns session=None. The old code read that as
+# "email already exists", returned 409, and deleted the tenant — which
+# rejected 100% of new registrations and stranded the auth user.
+# ─────────────────────────────────────────────────────────────────────
+
+def _signup_response(identities, session):
+    """Fake supabase auth.sign_up return value."""
+    user = MagicMock()
+    user.id = "user-abc"
+    user.identities = identities
+    resp = MagicMock()
+    resp.user = user
+    resp.session = session
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_signup_pending_confirmation_succeeds_and_keeps_tenant():
+    """New user + confirmation required (session=None, one identity)
+    → 200 with email_confirmation_required=True, tenant preserved."""
+    with patch("src.saas.auth_api.get_supabase") as gs:
+        db = _make_db()
+        db.auth.sign_up.return_value = _signup_response(
+            identities=[{"provider": "email"}], session=None,
+        )
+        gs.return_value = db
+        with patch("src.saas.auth_api.TenantManager") as tm_cls:
+            tm = MagicMock()
+            tm.create_tenant.return_value = "tenant-123"
+            tm_cls.return_value = tm
+            result = await signup(SignupRequest(
+                email="brand.new@example.com",
+                password="test1234",
+                business_name="Brand New Co",
+                phone="+60123456789",
+            ))
+
+    assert result.email_confirmation_required is True
+    assert result.access_token is None
+    assert result.tenant_id == "tenant-123"
+    # The tenant must survive — deleting it is what stranded users before.
+    assert not db.table.return_value.delete.called
+
+
+@pytest.mark.asyncio
+async def test_signup_existing_email_empty_identities_returns_409():
+    """Existing email → GoTrue returns identities == [] → 409."""
+    with patch("src.saas.auth_api.get_supabase") as gs:
+        db = _make_db()
+        db.auth.sign_up.return_value = _signup_response(
+            identities=[], session=None,
+        )
+        gs.return_value = db
+        with patch("src.saas.auth_api.TenantManager") as tm_cls:
+            tm_cls.return_value = MagicMock()
+            with pytest.raises(HTTPException) as ei:
+                await signup(SignupRequest(
+                    email="taken@example.com",
+                    password="test1234",
+                    business_name="Taken Co",
+                    phone="+60123456789",
+                ))
+    assert ei.value.status_code == 409
+    assert "already exists" in ei.value.detail.lower()
