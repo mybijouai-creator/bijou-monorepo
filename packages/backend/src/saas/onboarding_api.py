@@ -579,53 +579,69 @@ async def get_qr_code(token: str):
         # device_id query param. Use the header — it works on every endpoint.
         bridge_headers["X-Device-Id"] = device_id
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        # 2026-08-10 FIX: this used to call `{bridge_url}/qr` and, on 404, retry
+        # via `POST {bridge_url}/api/init`. NEITHER endpoint exists on the
+        # deployed GOWA v8 bridge — /api/init belongs to the older Go bridge in
+        # packages/bridge/main.go, which is not what runs in production. So the
+        # QR always 404'd and the onboarding page showed a broken image.
+        #
+        # The correct contract is `GET /app/login?device_id=...`, which every
+        # working caller already uses (dashboard_api_simple.py:1947,
+        # core/whatsapp_bridge_client.py:210, onboarding_complete.py:289).
+        # It returns JSON {code, results:{qr_link}}; that link is an ephemeral
+        # PNG the bridge deletes after ~30s, so proxy the bytes ourselves.
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             qr_response = await client.get(
-                f"{bridge_url}/qr", headers=bridge_headers
+                f"{bridge_url}/app/login",
+                params={"device_id": device_id},
+                headers=bridge_headers,
             )
 
-            # If QR not available (404), the bridge hasn't initialized the
-            # WhatsApp client for this device yet. Trigger init and retry.
-            if qr_response.status_code == 404:
-                logger.info(f"🔄 QR not found for {device_id}, initializing session...")
-
-                # Call /api/init to start WhatsApp client. The bridge
-                # create-device endpoint (/devices) is preferred for fresh
-                # tenants — see provision_whatsapp_device() — but /api/init
-                # also works to wake up an existing device.
-                init_response = await client.post(
-                    f"{bridge_url}/api/init", headers=bridge_headers
+            if qr_response.status_code != 200:
+                logger.error(
+                    f"❌ Bridge /app/login failed for {device_id}: "
+                    f"{qr_response.status_code} {qr_response.text[:200]}"
                 )
-
-                if init_response.status_code == 200:
-                    logger.info(f"✅ Session initialized for {device_id}, waiting for QR...")
-
-                    # Wait a moment for QR to generate, then retry
-                    import asyncio
-                    await asyncio.sleep(2)
-
-                    qr_response = await client.get(
-                        f"{bridge_url}/qr", headers=bridge_headers
-                    )
-                else:
-                    logger.error(f"❌ Failed to initialize session for {device_id}: {init_response.text}")
-
-            if qr_response.status_code == 200:
-                return Response(
-                    content=qr_response.content,
-                    media_type="image/png",
-                    headers={
-                        "Cache-Control": "no-cache, no-store, must-revalidate",
-                        "Pragma": "no-cache",
-                        "Expires": "0",
-                    },
-                )
-            else:
-                logger.error(f"❌ Bridge QR failed for {device_id}: {qr_response.status_code} {qr_response.text[:200]}")
+                # Never pass the bridge's status through. The page treats 404
+                # as "invalid or expired link" and tells the user to start over,
+                # but a bridge that is still waking up is transient.
                 raise HTTPException(
-                    status_code=qr_response.status_code,
-                    detail="Failed to generate QR code. Please refresh the page.",
+                    status_code=503,
+                    detail="WhatsApp session is still starting. Please wait a moment.",
                 )
+
+            content_type = qr_response.headers.get("content-type", "")
+
+            # Some bridge builds return the PNG directly.
+            if "image/" in content_type:
+                png_bytes = qr_response.content
+            else:
+                payload = qr_response.json()
+                qr_link = (payload.get("results") or {}).get("qr_link")
+                if not qr_link:
+                    logger.error(
+                        f"❌ Bridge returned no qr_link for {device_id}: {str(payload)[:200]}"
+                    )
+                    raise HTTPException(
+                        status_code=503,
+                        detail="WhatsApp session is still starting. Please wait a moment.",
+                    )
+                # Force HTTPS so an http->https redirect can't drop the auth header.
+                img_response = await client.get(
+                    qr_link.replace("http://", "https://"), headers=bridge_headers
+                )
+                img_response.raise_for_status()
+                png_bytes = img_response.content
+
+            return Response(
+                content=png_bytes,
+                media_type="image/png",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
 
     except HTTPException:
         raise
