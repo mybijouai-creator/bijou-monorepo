@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git ls-files:*)",
+      "Bash(npm run typecheck:landing)",
+      "Bash(npm run build:landing)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(node --check:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(make test)",
+      "Bash(make test-fast)",
+      "Bash(go vet:*)",
+      "Bash(go build:*)",
+      "Bash(curl -s -o /dev/null -w:*)"
+    ],
+    "deny": [
+      "Read(./ops/.fly_token*)",
+      "Read(./ops/.vercel_token)",
+      "Read(./ops/.fly_fresh)",
+      "Read(./packages/landing/.test_token)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/guard-bash.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}
