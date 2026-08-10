@@ -393,9 +393,25 @@
 
           // FIRST: if business info is missing (Google signup), show the form
           // and pause the rest of the flow until the user submits.
-          if (data.needs_business_info && state !== 'biz_form' && state !== 'qr' && state !== 'connecting' && state !== 'success') {
-            state = 'biz_form';
-            renderBusinessForm();
+          // 2026-08-10 FIX: the guards used to live in THIS condition, so once
+          // the form was showing (state === 'biz_form') the branch was skipped
+          // and control FELL THROUGH to the `qr_ready` branch below, which
+          // re-rendered the QR over the form. The user lost their vertical
+          // selection ~3s after it appeared, every time.
+          //
+          // Both flags are true simultaneously for Google signups:
+          // needs_business_info=true AND status='qr_ready' (google_oauth.py sets
+          // tenants.status='active' at creation, which onboarding_api.py maps to
+          // 'qr_ready'). So this must return unconditionally while info is
+          // missing — never fall through.
+          //
+          // 'qr' is deliberately NOT a guard here: reaching the QR step with
+          // business info still missing is the bug, not a state to preserve.
+          if (data.needs_business_info && state !== 'connecting' && state !== 'success') {
+            if (state !== 'biz_form') {
+              state = 'biz_form';
+              renderBusinessForm();
+            }
             return false; // pause polling; form submit resumes it
           }
 
@@ -437,8 +453,12 @@
       if (!token || token.length < 10) {
         renderError('Invalid onboarding link. Please use the link from your signup.');
       } else {
-        // Initial check
-        checkStatus();
+        // Initial check. Its return value used to be discarded, so a `false`
+        // ("pause — the user is filling in the form") was ignored and the
+        // interval below still ticked 3s later.
+        checkStatus().then((ok) => {
+          if (!ok && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        });
         // Polling loop
         pollTimer = setInterval(async () => {
           const ok = await checkStatus();

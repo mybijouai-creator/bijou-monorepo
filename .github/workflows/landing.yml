@@ -59,14 +59,24 @@ jobs:
           if-no-files-found: warn
 
   # ─────────────────────────────────────────────────────────────────────
-  # Deploy to Vercel — runs ONLY on push to main, and ONLY after ci passed
-  # Requires: BIJOU_VERCEL_TOKEN, BIJOU_VERCEL_ORG_ID, BIJOU_VERCEL_PROJECT_ID
-  # in GitHub repo Settings → Secrets and variables → Actions
+  # DISABLED 2026-08-10 — the landing site now deploys through Vercel's
+  # NATIVE git integration (project bijou-ai-digital-employee,
+  # rootDirectory=packages/landing, production branch main).
+  #
+  # Keeping this job would give one Vercel project two competing deploy
+  # paths; whichever finished last would win, so production could silently
+  # flip between commits. The native integration also builds on Vercel's own
+  # infrastructure, so it keeps working while GitHub Actions billing is
+  # locked — the exact failure that hid a total signup outage.
+  #
+  # The `ci` job above still gates every push (tsc --noEmit + build).
+  # To re-enable: delete `if: false` AND disable the git integration in the
+  # Vercel dashboard first, or you get double deploys again.
   # ─────────────────────────────────────────────────────────────────────
   deploy:
-    name: Deploy to Vercel
+    name: Deploy to Vercel (disabled — native git integration handles this)
     needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -19,6 +19,13 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+# 2026-08-10 SECURITY: these routes previously had NO authentication. Anyone
+# who knew (or guessed) a tenant UUID could read AND overwrite a business's
+# name, owner name, owner email and handover_contacts — i.e. staff names,
+# phone numbers and emails. tenant_id now comes from the verified session and
+# any client-supplied value is ignored.
+from src.core.dashboard_api_simple import verify_session
 from datetime import datetime
 
 from supabase import create_client, Client
@@ -101,7 +108,7 @@ class BusinessProfileResponse(BaseModel):
 
 
 @router.get("/profile", response_model=BusinessProfileResponse)
-async def get_business_profile(tenant_id: str):
+async def get_business_profile(tenant_id: str = Depends(verify_session)):
     """
     Get business profile for a tenant.
 
@@ -179,7 +186,10 @@ async def get_business_profile(tenant_id: str):
 
 
 @router.post("/profile", response_model=BusinessProfileResponse)
-async def upsert_business_profile(request: BusinessProfileRequest):
+async def upsert_business_profile(
+    request: BusinessProfileRequest,
+    session_tenant_id: str = Depends(verify_session),
+):
     """
     Create or update business profile for a tenant (upsert).
 
@@ -190,6 +200,16 @@ async def upsert_business_profile(request: BusinessProfileRequest):
         BusinessProfileResponse with updated profile
     """
     try:
+        # Trust ONLY the session. The body still carries tenant_id (the
+        # dashboard sends it), but honouring it would let any caller write to
+        # any tenant. Overwrite it before anything downstream reads it.
+        if request.tenant_id and request.tenant_id != session_tenant_id:
+            logger.warning(
+                "Ignoring client-supplied tenant_id %s; using session tenant %s",
+                request.tenant_id, session_tenant_id,
+            )
+        request.tenant_id = session_tenant_id
+
         logger.info(f"💾 Upserting business profile for tenant {request.tenant_id}")
 
         # Verify tenant exists

@@ -342,6 +342,21 @@
       // ── Session helpers (always read fresh from localStorage after refresh) ──────
       const getAccessToken = () => localStorage.getItem("access_token");
       const getRefreshToken = () => localStorage.getItem("refresh_token");
+
+      // 2026-08-10 FIX: five fetch() calls bypassed api() and authenticated via
+      // ?token=${TOKEN}. TOKEN is "" for every JWT-logged-in user, so those
+      // calls 401'd every time — media upload, media metadata, contacts
+      // import/export and KB file upload were all permanently broken.
+      // One helper so a sixth call site cannot repeat it. Deliberately omits
+      // Content-Type: FormData must set its own multipart boundary.
+      const authHeaders = (extra = {}) => {
+        const t = getAccessToken();
+        return {
+          "X-Tenant-ID": TENANT_ID,
+          ...(t ? { Authorization: `Bearer ${t}` } : {}),
+          ...extra,
+        };
+      };
       const REMEMBER_ME = localStorage.getItem("session_remember_me") === "true";
 
       // ── Auto-refresh: exchange refresh_token for new access_token on 401 ─────────
@@ -1964,6 +1979,7 @@
               `/api/dashboard/knowledge/upload-file?${params}`,
               {
                 method: "POST",
+                headers: authHeaders(),
                 body: form,
               },
             );
@@ -2652,7 +2668,7 @@
             const res = await fetch(
               `/api/contacts/export.csv?tenant_id=${TENANT_ID}&token=${TOKEN}`,
               {
-                headers: { "X-Tenant-ID": TENANT_ID },
+                headers: authHeaders(),
               },
             );
             if (!res.ok) throw new Error("Export failed");
@@ -2679,7 +2695,7 @@
               `/api/contacts/import?tenant_id=${TENANT_ID}&token=${TOKEN}`,
               {
                 method: "POST",
-                headers: { "X-Tenant-ID": TENANT_ID },
+                headers: authHeaders(),
                 body: form,
               },
             );
@@ -3131,7 +3147,7 @@
             const data = await api(
               `/api/call-booking/available-slots?start_date=${selectedDate}&end_date=${endDate}&duration_minutes=${formData.duration_minutes}`,
               {
-                headers: { "X-Tenant-ID": TENANT_ID },
+                headers: authHeaders(),
               },
             );
             setAvailableSlots(data.available_slots || []);
@@ -4186,7 +4202,7 @@
               `/api/media/upload?tenant_id=${TENANT_ID}&token=${TOKEN}`,
               {
                 method: "POST",
-                headers: { "X-Tenant-ID": TENANT_ID },
+                headers: authHeaders(),
                 body: fd,
               },
             );
@@ -4213,10 +4229,7 @@
               `/api/media/${id}?tenant_id=${TENANT_ID}&token=${TOKEN}`,
               {
                 method: "PATCH",
-                headers: {
-                  "Content-Type": "application/json",
-                  "X-Tenant-ID": TENANT_ID,
-                },
+                headers: authHeaders({ "Content-Type": "application/json" }),
                 body: JSON.stringify({
                   description: editDesc,
                   tags: editTags

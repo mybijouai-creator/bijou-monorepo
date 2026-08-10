@@ -54,9 +54,37 @@ jobs:
           find . -name '*.py' -not -path '*/__pycache__/*' -not -path '*/.venv/*' -exec python -m py_compile {} +
           echo "PASS: all .py compile"
 
-      - name: Python lint (ruff)
+      - name: Python lint (ruff) — errors BLOCK, style advisory
         run: |
-          ruff check src/ app/ scripts/ tests/ 2>&1 || echo "ruff had findings (review above)"
+          # Blocking tier: real errors only — undefined names, broken syntax,
+          # f-string bugs. F821 means a guaranteed NameError when that line
+          # runs, so it always gates.
+          #
+          # Covers 142 of 147 files under src/. The 5 exclusions carry
+          # PRE-EXISTING F821 defects (found 2026-08-10) and are excluded so
+          # this gate is green from day one and catches every NEW regression:
+          #   src/core/bijou.py:5464            undefined `httpx`
+          #   src/core/bijou.py:3100            undefined `msg_dict`  (logic bug)
+          #   src/integrations/webhooks.py:68   undefined `logger`
+          #   src/core/dashboard_api.py:119,223,335  undefined `SupabaseDB`
+          #   src/saas/escalation_api.py:348,350     undefined `Enum`
+          #   src/core/copilot_methods.py:37    undefined `Command`, `Optional`
+          # tests/ has 6 more (e.g. tests/load/test_call_load.py:558 `os`).
+          #
+          # Fix these, then delete the matching --exclude line. Do NOT widen
+          # the scope before they are green, or this gate gets deleted again.
+          echo "--- blocking: ruff E9,F63,F7,F82 on src/ ---"
+          ruff check src/ --select E9,F63,F7,F82 \
+            --exclude src/core/bijou.py \
+            --exclude src/core/copilot_methods.py \
+            --exclude src/core/dashboard_api.py \
+            --exclude src/integrations/webhooks.py \
+            --exclude src/saas/escalation_api.py
+          echo "PASS: no ruff errors in blocking scope (142/147 src files)"
+          # Advisory tier: full ruleset, reported but non-blocking until the
+          # existing backlog is cleared. Promote to blocking once green.
+          echo "--- advisory: full ruff ---"
+          ruff check src/ app/ scripts/ tests/ 2>&1 || echo "ruff style findings above (advisory)"
 
       - name: Python type check (mypy, lenient)
         run: |
@@ -72,6 +100,34 @@ jobs:
 
       - name: Node deps (for .cjs scripts that import npm packages)
         run: npm install --no-audit --no-fund --no-save
+
+      # ───────────────────────────────────────────────────────────────
+      # Tests. Added 2026-08-10 — this workflow previously ran NO tests
+      # at all, so 439 existing tests never executed in CI and a change
+      # that merely compiled could break auth or tenant isolation and
+      # deploy straight to Fly. That is how a total signup outage shipped.
+      #
+      # Two tiers on purpose. As of 2026-08-10 `tests/unit/` has 44 failing
+      # tests (219 pass) from pre-existing breakage; making the whole tier
+      # blocking today would just get this step deleted again. So the
+      # auth/OAuth suites — currently 15/15 green and covering the exact
+      # paths that broke — gate the build, and the rest reports loudly.
+      #
+      # TODO: fix the 44, then fold tests/unit/ into the blocking tier.
+      # ───────────────────────────────────────────────────────────────
+      - name: Tests (blocking — auth + OAuth regression suites)
+        run: |
+          pip install -r requirements-dev.txt
+          python -m pytest \
+            tests/unit/test_auth_signup_error_mapping.py \
+            tests/unit/test_google_oauth_redirect.py \
+            -q
+
+      - name: Tests (advisory — full unit tier)
+        run: |
+          python -m pytest tests/unit/ -q --no-header 2>&1 | tail -25 || \
+            echo "unit-tier failures above are the known backlog (advisory)"
+        continue-on-error: true
 
   # ─────────────────────────────────────────────────────────────────────
   # Deploy to Fly.io — runs ONLY on push to main, after ci passed
