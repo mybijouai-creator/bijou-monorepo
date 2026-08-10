@@ -34,12 +34,37 @@ router = APIRouter(prefix="/api/auth/google", tags=["google-oauth"])
 # CONFIGURATION
 # ════════════════════════════════════════════════════════════════
 
+# Canonical public origin. Everything user-facing must be built on this and
+# NEVER on request.base_url.
+#
+# 2026-08-10 BUG: the OAuth callback used `PUBLIC_URL or str(request.base_url)`.
+# Behind Fly's proxy the request host resolves to bijou-production.fly.dev, so
+# users finishing Google sign-up were redirected to
+# https://bijou-production.fly.dev/onboard/... — a DIFFERENT browser origin from
+# app.mybijou.xyz. The dashboard keeps its JWT in localStorage, which is
+# origin-scoped, so on that host it found no session and bounced to /login.
+# Symptom: "redirects to the fly machine url, no QR page, no vertical".
+#
+# Defaulting to the canonical host matches every other module here
+# (dashboard_api_simple.py:86, onboarding_api.py:191, onboarding_complete.py:124)
+# and removes the request-host dependency entirely.
+CANONICAL_PUBLIC_URL = "https://app.mybijou.xyz"
+
+
+def _public_base_url() -> str:
+    """Public origin for user-facing redirects. Never derived from the request."""
+    return (os.getenv("PUBLIC_URL") or CANONICAL_PUBLIC_URL).rstrip("/")
+
+
 def get_google_config():
     """Get Google OAuth configuration from environment"""
     return {
         "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
         "client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
-        "redirect_uri": os.getenv("GOOGLE_REDIRECT_URI", "https://bijou-production.fly.dev/api/auth/google/callback"),
+        "redirect_uri": os.getenv(
+            "GOOGLE_REDIRECT_URI",
+            f"{CANONICAL_PUBLIC_URL}/api/auth/google/callback",
+        ),
         "scopes": [
             "openid",
             "https://www.googleapis.com/auth/userinfo.email",
@@ -188,8 +213,7 @@ async def google_callback(code: str, state: str, request: Request):
             if ti_data and ti_data.get("whatsapp_connected_at"):
                 # User already completed onboarding - go straight to dashboard
                 logger.info(f"✅ WhatsApp already connected for {tenant_id}, skipping onboarding")
-                public_url = os.getenv("PUBLIC_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
-                dashboard_url = f"{public_url}/dashboard"
+                dashboard_url = f"{_public_base_url()}/dashboard"
                 return RedirectResponse(url=dashboard_url)
             
             # CRITICAL: Also update tenants.signup_token for onboarding API compatibility
@@ -202,11 +226,7 @@ async def google_callback(code: str, state: str, request: Request):
             logger.info(f"🎫 Created onboarding session: {onboarding_token[:20]}... for tenant {tenant_id}")
 
             # Redirect to onboarding QR page (served from our own backend, not Vercel)
-            # Use PUBLIC_URL if set, else fallback to the request host
-            public_url = os.getenv("PUBLIC_URL", "").rstrip("/")
-            if not public_url:
-                public_url = str(request.base_url).rstrip("/")
-            onboarding_url = f"{public_url}/onboard/{onboarding_token}"
+            onboarding_url = f"{_public_base_url()}/onboard/{onboarding_token}"
 
             return RedirectResponse(url=onboarding_url)
             
