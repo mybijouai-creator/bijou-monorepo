@@ -61,6 +61,28 @@ function CopyButton({ text, label = "Copy body" }: { text: string; label?: strin
   );
 }
 
+// /api/agents now requires a shared secret on every action (it serves the
+// private lead pipeline). This is a founder-only internal screen, so prompt
+// once per tab and hold the value in sessionStorage — deliberately NOT
+// localStorage, so it dies with the tab. A browser cannot hold a server secret
+// safely; the real guarantee is the server-side check, this only carries it.
+const AGENT_SECRET_KEY = "bijou_agents_secret";
+
+function agentSecret(): string {
+  let s = sessionStorage.getItem(AGENT_SECRET_KEY) || "";
+  if (!s) {
+    s = window.prompt("Admin secret for /api/agents:") || "";
+    if (s) sessionStorage.setItem(AGENT_SECRET_KEY, s);
+  }
+  return s;
+}
+
+// On 401 the stored secret is wrong — drop it so the next call re-prompts
+// instead of silently failing for the rest of the session.
+function clearAgentSecretOn401(status: number) {
+  if (status === 401) sessionStorage.removeItem(AGENT_SECRET_KEY);
+}
+
 export const OutreachQueue: React.FC = () => {
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,9 +99,14 @@ export const OutreachQueue: React.FC = () => {
     setLoading(true);
     try {
       const status = showRejected ? "approved" : "pending";
-      const r = await fetch(`/api/agents?action=review-queue&status=${status}&limit=100`);
+      const r = await fetch(`/api/agents?action=review-queue&status=${status}&limit=100`, {
+        headers: { "X-Cron-Secret": agentSecret() },
+      });
       const data = await r.json();
-      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      if (!r.ok) {
+        clearAgentSecretOn401(r.status);
+        throw new Error(data.error || `HTTP ${r.status}`);
+      }
       setItems(data.items || []);
     } catch (e: any) {
       showToast(`Load failed: ${e?.message || e}`, "err");
@@ -100,11 +127,17 @@ export const OutreachQueue: React.FC = () => {
         : "/api/agents?action=review-queue";
       const r = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Cron-Secret": agentSecret(),
+        },
         body: JSON.stringify({ id, action, reason }),
       });
       const data = await r.json();
-      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      if (!r.ok) {
+        clearAgentSecretOn401(r.status);
+        throw new Error(data.error || `HTTP ${r.status}`);
+      }
       showToast(`✓ ${action} ok`, "ok");
       await fetchItems();
     } catch (e: any) {

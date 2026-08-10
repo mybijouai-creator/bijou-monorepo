@@ -1602,9 +1602,36 @@ async function handleCostWeekly(req, res, db) {
 // Router
 // ----------------------------------------------------------------------------
 
+// Every action below reads or mutates the private lead pipeline (prospect
+// names, contact channels, drafted outreach). Before 2026-08-10 the only check
+// was an *optional* one inside handleScout, so an unauthenticated GET returned
+// live prospect rows. Gate the whole router in one place: any new action added
+// to the switch is protected by default rather than by remembering to add it.
+//
+// Fails CLOSED — if no secret is configured the endpoint is disabled rather
+// than left open, matching api/onboarding/signup.js's 503 MISCONFIGURED path.
+// CORS is not a substitute: it constrains browsers, not curl.
+function agentsAuthFailure(req) {
+  const expected =
+    process.env.AGENTS_API_SECRET || process.env.SCOUT_CRON_SECRET;
+  if (!expected) {
+    return { status: 503, message: "Agents API not configured" };
+  }
+  const auth = req.headers.authorization || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const supplied = req.headers["x-cron-secret"] || bearer;
+  if (supplied !== expected) {
+    return { status: 401, message: "Unauthorized" };
+  }
+  return null;
+}
+
 export default async function handler(req, res) {
   setCors(res);
   if (req.method === "OPTIONS") return res.status(200).json({ ok: true });
+
+  const authFailure = agentsAuthFailure(req);
+  if (authFailure) return err(res, authFailure.status, authFailure.message);
 
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_KEY;

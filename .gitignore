@@ -11,6 +11,16 @@
 *.env.flyio
 *.env.composio
 
+# Raw credential files written by ops scripts (fly/vercel/supabase tokens).
+# These are live deploy credentials — never tracked.
+*_token
+*_token[0-9]
+.test_token
+ops/.fly_*
+ops/.vercel_*
+ops/.supabase_*
+ops/.bridge_app
+
 # =============================================================================
 # Node / TypeScript / Vite
 # =============================================================================
