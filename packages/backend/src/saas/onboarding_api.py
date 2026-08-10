@@ -548,13 +548,17 @@ async def get_qr_code(token: str):
 
         # Find tenant by token
         result = (
-            supabase.table("tenants").select("id").eq("signup_token", token).execute()
+            supabase.table("tenants")
+            .select("id, business_name")
+            .eq("signup_token", token)
+            .execute()
         )
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Invalid token")
 
         tenant_id = result.data[0]["id"]
+        business_name = result.data[0].get("business_name") or f"Bijou {tenant_id[:8]}"
 
         # Look up the device_id for this tenant. Fall back to the predictable
         # mapping `bijou-{tenant_id}` if the table lookup misses (e.g. the
@@ -596,6 +600,53 @@ async def get_qr_code(token: str):
                 params={"device_id": device_id},
                 headers=bridge_headers,
             )
+
+            # 2026-08-10: Google signups never provision a bridge device —
+            # google_oauth.create_tenant_from_google makes no bridge call — so
+            # the id above is the invented `bijou-{tenant_id}` and the bridge
+            # answers DEVICE_NOT_FOUND. Provision on demand, and persist the id
+            # the bridge actually assigns (results.id) rather than our guess,
+            # which is what made the stored mapping wrong in the first place.
+            if (
+                qr_response.status_code == 404
+                and "DEVICE_NOT_FOUND" in qr_response.text
+            ):
+                logger.info(f"🔧 No bridge device for {tenant_id}; provisioning…")
+                create_response = await client.post(
+                    f"{bridge_url}/devices",
+                    json={"name": business_name, "device_id": device_id},
+                    headers=bridge_headers,
+                )
+                if create_response.status_code in (200, 201):
+                    created = (create_response.json().get("results") or {})
+                    device_id = created.get("id") or device_id
+                    logger.info(f"✅ Provisioned bridge device {device_id} for {tenant_id}")
+                    try:
+                        supabase.table("whatsapp_devices").upsert(
+                            {
+                                "tenant_id": tenant_id,
+                                "device_id": device_id,
+                                "device_name": business_name,
+                            },
+                            on_conflict="tenant_id",
+                        ).execute()
+                    except Exception as persist_err:
+                        # Non-fatal: the QR still works this request, we just
+                        # re-provision next time.
+                        logger.warning(
+                            f"⚠️ Could not persist device mapping for {tenant_id}: {persist_err}"
+                        )
+                    bridge_headers["X-Device-Id"] = device_id
+                    qr_response = await client.get(
+                        f"{bridge_url}/app/login",
+                        params={"device_id": device_id},
+                        headers=bridge_headers,
+                    )
+                else:
+                    logger.error(
+                        f"❌ Bridge device creation failed for {tenant_id}: "
+                        f"{create_response.status_code} {create_response.text[:200]}"
+                    )
 
             if qr_response.status_code != 200:
                 logger.error(
