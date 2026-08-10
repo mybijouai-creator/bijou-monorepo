@@ -22,6 +22,14 @@ ops/.supabase_*
 ops/.bridge_app
 
 # =============================================================================
+# Agent/debug scratch. Underscore prefix = throwaway probe, not product code.
+# Keeps `git status` readable so real changes are visible.
+# =============================================================================
+ops/_*
+ops/*.err
+packages/backend/app/_*.cjs
+
+# =============================================================================
 # Node / TypeScript / Vite
 # =============================================================================
 node_modules/

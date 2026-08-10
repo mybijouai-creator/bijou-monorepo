@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Bijou AI — Signal Gem mark">
+  <title>Bijou AI — Signal Gem</title>
+  <desc>A faceted emerald gem whose lower-left tail forms a chat-bubble silhouette.</desc>
+  <!-- Main gem body with chat-bubble tail -->
+  <path class="bj-body" fill="currentColor"
+    d="M30,12 L70,12 L88,40 L70,73 L50,73 L26,92 L33,73 L12,40 Z"/>
+  <!-- Internal facet structure (the cut) -->
+  <g class="bj-facets" fill="none" stroke="var(--bj-cut, currentColor)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" opacity="0.55">
+    <!-- Table (top center flat) -->
+    <path d="M40,26 L60,26 L68,40 L60,54 L40,54 L32,40 Z"/>
+    <!-- Vertical facet line through table -->
+    <path d="M50,26 L50,54"/>
+    <!-- Crown facets (top edges) -->
+    <path d="M40,26 L30,12 M60,26 L70,12"/>
+    <!-- Girdle lines (horizontal middle) -->
+    <path d="M32,40 L12,40 M68,40 L88,40"/>
+    <!-- Pavilion facets (bottom edges) -->
+    <path d="M40,54 L30,73 M60,54 L70,73"/>
+    <!-- Pavilion line through center -->
+    <path d="M50,54 L50,73"/>
+    <!-- Chat-bubble tail facet -->
+    <path d="M50,73 L26,92 L33,73"/>
+  </g>
+</svg>

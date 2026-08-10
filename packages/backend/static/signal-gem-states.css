@@ -1,0 +1,426 @@
+/* =============================================================================
+   Bijou AI — Signal Gem · Chat State CSS
+   v1.0 · 2026-07-25
+   -----------------------------------------------------------------------------
+   Drop-in stylesheet for the Signal Gem chat avatar / brand mark.
+   Class names match the brand-system page (`.state-idle .m`, `.state-listening
+   .wave`, etc.) so existing markup works unchanged.
+
+   Usage
+   -----------------------------------------------------------------------------
+   1. Include this file in <head>:
+        <link rel="stylesheet" href="signal-gem-states.css" />
+
+   2. Wrap the gem in a state container. Either class OR data-bj-state works
+      (the JS toggles the data attribute, but class-based is also supported):
+
+        <div class="bj-gem state-idle" data-bj-state="idle">
+          <div class="gem-stage">
+            <span class="wave w1"></span>
+            <span class="wave w2"></span>
+            <span class="wave w3"></span>
+            <span class="mark m">
+              <!-- inline the Signal Gem SVG (see integration spec) -->
+            </span>
+          </div>
+        </div>
+
+   3. State container classes (any one at a time):
+        .state-idle       · .state-listening
+        .state-speaking   · .state-thinking
+      OR equivalently:
+        [data-bj-state="idle"]  /  "listening" / "speaking" / "thinking"
+
+   4. For the logo reveal intro, add the .bj-intro class once on page load
+      and remove after the animation finishes (JS handles this).
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   1. Design tokens (mirrors the brand-system page)
+   ----------------------------------------------------------------------------- */
+.bj-gem,
+.bj-gem * {
+  --bj-green:       #0B3B2E;
+  --bj-green-2:     #093025;
+  --bj-green-3:     #072A1F;
+  --bj-gold:        #E3B457;
+  --bj-gold-2:      #D4A24C;
+  --bj-gold-soft:   #B8860B;
+  --bj-cream:       #F7F4EC;
+  --bj-black:       #0A0A0A;
+  --bj-rule:        rgba(227, 180, 87, 0.18);
+  --bj-rule-strong: rgba(227, 180, 87, 0.45);
+  --bj-mute:        rgba(247, 244, 236, 0.55);
+  --bj-mute-2:      rgba(247, 244, 236, 0.32);
+
+  /* Animation tuning */
+  --bj-breathe-period: 3.2s;
+  --bj-wave-period:    2.4s;
+  --bj-tail-period:    0.4s;
+  --bj-facet-period:   1.6s;
+  --bj-easing:         cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* -----------------------------------------------------------------------------
+   2. Mark + gem stage scaffolding
+   ----------------------------------------------------------------------------- */
+.mark { display: inline-block; vertical-align: middle; }
+.mark svg { display: block; }
+
+.gem-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  isolation: isolate;          /* keep rings/clones from bleeding out */
+}
+.gem-stage .m {
+  position: relative;
+  z-index: 2;
+  color: var(--bj-gold);
+  transform-origin: 50% 40%;
+  will-change: transform, opacity, filter;
+}
+.gem-stage .m svg { display: block; }
+
+/* The bubble-tail is the path that becomes the chat-bubble pointer */
+.gem-stage .m .bubble-tail {
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+  will-change: transform;
+}
+
+/* The facet-stroke class is on the inner cut lines (used in the thinking state).
+   If your inline SVG doesn't already have it, the selectors below also target
+   `.bj-facets > path` directly so you don't have to edit the SVG. */
+.gem-stage .m .bj-facets path { transform-box: fill-box; transform-origin: 50% 50%; }
+
+/* Soft glow that follows every state (Apple-product-level ambient light) */
+.gem-stage .m::after {
+  content: "";
+  position: absolute;
+  inset: -25%;
+  z-index: -1;
+  background: radial-gradient(closest-side, rgba(227, 180, 87, 0.45), transparent 70%);
+  filter: blur(18px);
+  opacity: 0;
+  transition: opacity 600ms var(--bj-easing);
+  pointer-events: none;
+}
+.bj-gem:hover .gem-stage .m::after,
+.bj-gem:focus-within .gem-stage .m::after { opacity: 0.5; }
+
+/* -----------------------------------------------------------------------------
+   3. State: idle
+   The assistant is here, waiting. Subtle breathing — 3.2s, eased.
+   ----------------------------------------------------------------------------- */
+.state-idle .m,
+[data-bj-state="idle"] .m {
+  animation: bj-idle-breathe var(--bj-breathe-period) ease-in-out infinite;
+}
+@keyframes bj-idle-breathe {
+  0%, 100% { transform: scale(1);     opacity: 0.9; }
+  50%      { transform: scale(1.04);  opacity: 1;   }
+}
+
+/* -----------------------------------------------------------------------------
+   4. State: listening
+   Three sound-wave rings emanate from the gem.
+   ----------------------------------------------------------------------------- */
+.state-listening .wave,
+[data-bj-state="listening"] .wave {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  border: 1.5px solid var(--bj-gold);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  width:  64px;   /* matches default .m size */
+  height: 64px;
+  will-change: transform, opacity;
+}
+.state-listening .w1,
+[data-bj-state="listening"] .w1 { animation: bj-wave var(--bj-wave-period) ease-out infinite; }
+.state-listening .w2,
+[data-bj-state="listening"] .w2 { animation: bj-wave var(--bj-wave-period) ease-out 0.6s infinite; }
+.state-listening .w3,
+[data-bj-state="listening"] .w3 { animation: bj-wave var(--bj-wave-period) ease-out 1.2s infinite; }
+
+@keyframes bj-wave {
+  0%   { transform: scale(0.5); opacity: 0.85; }
+  100% { transform: scale(1.6); opacity: 0;    }
+}
+
+/* While listening, the gem itself also gets a soft pulse to feel "attentive" */
+.state-listening .m,
+[data-bj-state="listening"] .m {
+  animation: bj-listen-pulse 1.8s ease-in-out infinite;
+  filter: drop-shadow(0 0 12px rgba(227, 180, 87, 0.4));
+}
+@keyframes bj-listening-pulse { /* alternate name retained for legacy refs */
+  0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 8px  rgba(227,180,87,0.35)); }
+  50%      { transform: scale(1.05); filter: drop-shadow(0 0 18px rgba(227,180,87,0.65)); }
+}
+@keyframes bj-listen-pulse {
+  0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 8px  rgba(227,180,87,0.35)); }
+  50%      { transform: scale(1.05); filter: drop-shadow(0 0 18px rgba(227,180,87,0.65)); }
+}
+
+/* -----------------------------------------------------------------------------
+   5. State: speaking
+   Bubble tail pulses + the gem vibrates subtly. Reads as "sending a message".
+   ----------------------------------------------------------------------------- */
+.state-speaking .m,
+[data-bj-state="speaking"] .m {
+  animation: bj-speak-vibe 0.5s ease-in-out infinite alternate;
+  transform-origin: 50% 40%;
+}
+.state-speaking .m .bubble-tail,
+[data-bj-state="speaking"] .m .bubble-tail {
+  animation: bj-speak-tail var(--bj-tail-period) ease-in-out infinite alternate;
+}
+@keyframes bj-speak-vibe {
+  0%   { transform: scale(1)    translateX(0); }
+  100% { transform: scale(1.04) translateX(-1px); }
+}
+@keyframes bj-speak-tail {
+  0%   { transform: scaleY(0.92); }
+  100% { transform: scaleY(1.12); }
+}
+
+/* -----------------------------------------------------------------------------
+   6. State: thinking
+   Facets light up in chase sequence. Reasoning in progress.
+   Targets both `.facet-stroke` and `.bj-facets > path` for compatibility.
+   ----------------------------------------------------------------------------- */
+.state-thinking .m .bj-facets path,
+.state-thinking .m .facet-stroke,
+[data-bj-state="thinking"] .m .bj-facets path,
+[data-bj-state="thinking"] .m .facet-stroke {
+  animation: bj-facet-glow var(--bj-facet-period) ease-in-out infinite;
+}
+.state-thinking .m .bj-facets path:nth-child(1),
+.state-thinking .m .facet-stroke:nth-child(1),
+[data-bj-state="thinking"] .m .bj-facets path:nth-child(1),
+[data-bj-state="thinking"] .m .facet-stroke:nth-child(1) { animation-delay: 0s;   }
+.state-thinking .m .bj-facets path:nth-child(2),
+.state-thinking .m .facet-stroke:nth-child(2),
+[data-bj-state="thinking"] .m .bj-facets path:nth-child(2),
+[data-bj-state="thinking"] .m .facet-stroke:nth-child(2) { animation-delay: 0.2s; }
+.state-thinking .m .bj-facets path:nth-child(3),
+.state-thinking .m .facet-stroke:nth-child(3),
+[data-bj-state="thinking"] .m .bj-facets path:nth-child(3),
+[data-bj-state="thinking"] .m .facet-stroke:nth-child(3) { animation-delay: 0.4s; }
+.state-thinking .m .bj-facets path:nth-child(4),
+.state-thinking .m .facet-stroke:nth-child(4),
+[data-bj-state="thinking"] .m .bj-facets path:nth-child(4),
+[data-bj-state="thinking"] .m .facet-stroke:nth-child(4) { animation-delay: 0.6s; }
+.state-thinking .m .bj-facets path:nth-child(5),
+.state-thinking .m .facet-stroke:nth-child(5),
+[data-bj-state="thinking"] .m .bj-facets path:nth-child(5),
+[data-bj-state="thinking"] .m .facet-stroke:nth-child(5) { animation-delay: 0.8s; }
+.state-thinking .m .bj-facets path:nth-child(6),
+.state-thinking .m .facet-stroke:nth-child(6),
+[data-bj-state="thinking"] .m .bj-facets path:nth-child(6),
+[data-bj-state="thinking"] .m .facet-stroke:nth-child(6) { animation-delay: 1.0s; }
+
+@keyframes bj-facet-glow {
+  0%, 100% { stroke: var(--bj-green); opacity: 0.5; }
+  50%      { stroke: var(--bj-gold);  opacity: 1;   }
+}
+
+/* While thinking, the gem body has a faint inner shimmer */
+.state-thinking .m,
+[data-bj-state="thinking"] .m {
+  filter: drop-shadow(0 0 6px rgba(227, 180, 87, 0.25));
+}
+
+/* -----------------------------------------------------------------------------
+   7. Logo intro animation
+   Materialize → scale up → settle → bubble tail breathes. Plays once on load.
+   Add the .bj-intro class via JS on page load, remove after 4500ms.
+   ----------------------------------------------------------------------------- */
+.bj-intro .m {
+  animation: bj-intro-mark 4.5s var(--bj-easing) 1 both;
+  will-change: transform, opacity, filter;
+}
+.bj-intro .m .bubble-tail {
+  animation: bj-intro-tail 1.6s ease-in-out 1.4s infinite;
+  transform-box: fill-box;
+  transform-origin: 50% 30%;
+}
+@keyframes bj-intro-mark {
+  0%   { transform: scale(0.3) rotate(-30deg); opacity: 0;
+         filter: drop-shadow(0 0 0 transparent); }
+  20%  { transform: scale(1.05) rotate(0deg);  opacity: 1;
+         filter: drop-shadow(0 0 30px rgba(227, 180, 87, 0.6)); }
+  28%  { transform: scale(1) rotate(0deg);
+         filter: drop-shadow(0 0 18px rgba(227, 180, 87, 0.4)); }
+  70%  { transform: scale(1);
+         filter: drop-shadow(0 0 10px rgba(227, 180, 87, 0.2)); }
+  85%  { transform: scale(1) translateY(2px); }
+  90%  { transform: scale(1) translateY(0);   }
+  100% { transform: scale(1);
+         filter: drop-shadow(0 0 8px rgba(227, 180, 87, 0.18)); }
+}
+@keyframes bj-intro-tail {
+  0%, 100% { transform: scale(1);    }
+  50%      { transform: scale(1.08); }
+}
+
+/* -----------------------------------------------------------------------------
+   8. Voice mode stage
+   The Signal Gem becomes the live voice interface. Rings expand, gem pulses
+   softly, EQ bars dance below. Use inside `.voice-stage` (matches brand page).
+   ----------------------------------------------------------------------------- */
+.voice-stage {
+  position: relative;
+  background: radial-gradient(circle at 50% 50%, var(--bj-green) 0%, var(--bj-green-3) 100%);
+  border: 1px solid var(--bj-rule);
+  border-radius: 18px;
+  padding: 80px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 420px;
+  overflow: hidden;
+}
+.voice-orb {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.voice-orb .core {
+  width: 96px;
+  height: 96px;
+  color: var(--bj-gold);
+  position: relative;
+  z-index: 5;
+  animation: bj-voice-core 1.6s ease-in-out infinite;
+  filter: drop-shadow(0 0 20px rgba(227, 180, 87, 0.5));
+}
+@keyframes bj-voice-core {
+  0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 20px rgba(227,180,87,0.5)); }
+  50%      { transform: scale(1.08); filter: drop-shadow(0 0 40px rgba(227,180,87,0.8)); }
+}
+.voice-orb .ring {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  border: 1.5px solid var(--bj-gold);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.voice-orb .r1 { animation: bj-voice-ring 2.2s ease-out infinite;       }
+.voice-orb .r2 { animation: bj-voice-ring 2.2s ease-out 0.55s infinite; }
+.voice-orb .r3 { animation: bj-voice-ring 2.2s ease-out 1.10s infinite; }
+.voice-orb .r4 { animation: bj-voice-ring 2.2s ease-out 1.65s infinite; }
+@keyframes bj-voice-ring {
+  0%   { transform: scale(0.3); opacity: 0.75; }
+  100% { transform: scale(1.6); opacity: 0;    }
+}
+.voice-orb .eq {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: -50px;
+  display: flex;
+  gap: 3px;
+  align-items: end;
+  height: 24px;
+}
+.voice-orb .eq span {
+  display: block;
+  width: 3px;
+  background: var(--bj-gold);
+  border-radius: 2px;
+  animation: bj-eq 0.9s ease-in-out infinite;
+}
+.voice-orb .eq span:nth-child(1) { animation-delay: 0.0s; }
+.voice-orb .eq span:nth-child(2) { animation-delay: 0.1s; }
+.voice-orb .eq span:nth-child(3) { animation-delay: 0.2s; }
+.voice-orb .eq span:nth-child(4) { animation-delay: 0.3s; }
+.voice-orb .eq span:nth-child(5) { animation-delay: 0.4s; }
+.voice-orb .eq span:nth-child(6) { animation-delay: 0.5s; }
+.voice-orb .eq span:nth-child(7) { animation-delay: 0.6s; }
+@keyframes bj-eq {
+  0%, 100% { height: 4px;  opacity: 0.4; }
+  50%      { height: 22px; opacity: 1;   }
+}
+
+/* -----------------------------------------------------------------------------
+   9. Chat message states (typing indicator, speaking bubble highlight)
+   ----------------------------------------------------------------------------- */
+.msg.typing .bubble {
+  display: inline-flex;
+  gap: 4px;
+  padding: 14px 16px;
+  align-items: center;
+}
+.msg.typing .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bj-gold);
+  opacity: 0.4;
+  animation: bj-typing-dot 1.2s ease-in-out infinite;
+}
+.msg.typing .dot:nth-child(2) { animation-delay: 0.2s; }
+.msg.typing .dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bj-typing-dot {
+  0%, 100% { opacity: 0.3; transform: translateY(0);    }
+  50%      { opacity: 1;   transform: translateY(-3px); }
+}
+
+.msg.bot.speaking .bubble {
+  background: rgba(227, 180, 87, 0.14);
+  border-color: rgba(227, 180, 87, 0.18);
+  transition: background 200ms var(--bj-easing), border-color 200ms var(--bj-easing);
+}
+
+/* -----------------------------------------------------------------------------
+   10. Smooth cross-fade between states
+   When the gem container switches state, the old keyframes get replaced
+   abruptly. This guarantees the swap is never a harsh jump.
+   ----------------------------------------------------------------------------- */
+.gem-stage .m,
+.gem-stage .m .bubble-tail,
+.gem-stage .m .bj-facets path,
+.gem-stage .m .facet-stroke,
+.gem-stage .wave,
+.voice-orb .core,
+.voice-orb .ring,
+.voice-orb .eq span {
+  transition:
+    filter   400ms var(--bj-easing),
+    opacity  300ms var(--bj-easing);
+}
+
+/* -----------------------------------------------------------------------------
+   11. Accessibility — honor user motion preferences
+   ----------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .gem-stage .m,
+  .gem-stage .m .bubble-tail,
+  .gem-stage .m .bj-facets path,
+  .gem-stage .m .facet-stroke,
+  .gem-stage .wave,
+  .voice-orb .core,
+  .voice-orb .ring,
+  .voice-orb .eq span,
+  .msg.typing .dot,
+  .bj-intro .m,
+  .bj-intro .m .bubble-tail {
+    animation: none !important;
+  }
+  .state-idle .m,
+  [data-bj-state="idle"] .m { opacity: 1; }
+  .state-listening .wave,
+  [data-bj-state="listening"] .wave { opacity: 0.4; }
+}
