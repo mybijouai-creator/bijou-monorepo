@@ -36,6 +36,13 @@ dist-ssr
 *credentials*.json
 *config.json
 *secrets*.json
+# 2026-08-10: `*config.json` above is meant for credential-bearing configs
+# (firebase-config.json and friends). It also swallowed tsconfig.json, so CI
+# checked out a tree with no TypeScript config — `npx tsc --noEmit` found no
+# inputs, printed its help text and exited 1. The landing workflow had been red
+# for days because of it. tsconfig.json holds compiler options only, no secrets.
+!tsconfig.json
+!tsconfig.*.json
 
 # Sensitive files
 **/*ISSUE*.png
