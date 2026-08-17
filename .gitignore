@@ -28,6 +28,8 @@ ops/.bridge_app
 ops/_*
 ops/*.err
 packages/backend/app/_*.cjs
+packages/backend/logs/_*.cjs   # scratch probes dropped in logs/ by ad-hoc debugging
+/.tmp_*.json                 # one-off curl probe bodies (auth flow tests, etc.)
 
 # =============================================================================
 # Node / TypeScript / Vite

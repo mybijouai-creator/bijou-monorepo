@@ -530,12 +530,15 @@
           const data = await response.json();
 
           if (response.ok) {
-            // Store tokens
-            localStorage.setItem("access_token", data.access_token);
-            localStorage.setItem("refresh_token", data.refresh_token);
-            localStorage.setItem("tenant_id", data.tenant_id);
-            localStorage.setItem("business_name", data.business_name);
-            localStorage.setItem("email", data.email);
+            // Store tokens. The `|| ""` fallbacks mirror auth-callback.html
+            // (the Google sign-in path) so a missing field on the response
+            // doesn't store the literal string "undefined" in localStorage —
+            // which the dashboard would then read back and display. 2026-08-17.
+            localStorage.setItem("access_token", data.access_token || "");
+            localStorage.setItem("refresh_token", data.refresh_token || "");
+            localStorage.setItem("tenant_id", data.tenant_id || "");
+            localStorage.setItem("business_name", data.business_name || "");
+            localStorage.setItem("email", data.email || "");
             // Remember me: persist flag + login timestamp
             const rememberMe = document.getElementById("rememberMe")?.checked || false;
             localStorage.setItem("session_remember_me", rememberMe ? "true" : "false");

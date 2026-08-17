@@ -24,6 +24,28 @@ except ImportError:  # pragma: no cover
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Canonical public origin. Everything user-facing (emails, WhatsApp links,
+# magic links, password resets) must be built on this — NEVER on
+# request.base_url.
+#
+# 2026-08-17 BUG: the welcome WhatsApp message and the password-reset email
+# both used `os.getenv("APP_URL", "https://bijou-production.fly.dev")` as
+# their fallback. Behind Fly's proxy, `bijou-production.fly.dev` is the
+# internal container host — a different browser origin from app.mybijou.xyz.
+# Result: the password-reset email and the welcome-WhatsApp message linked
+# to the Fly machine URL, and the user's browser either showed a
+# Fly-default-cert warning or, on the bare Fly host, the dashboard found
+# no JWT in localStorage (origin-scoped) and bounced them to /login.
+# Mirrors `_public_base_url()` in google_oauth.py:54 and every other
+# canonical-URL site in this monorepo (onboarding_api.py:191, etc.).
+CANONICAL_PUBLIC_URL = "https://app.mybijou.xyz"
+
+
+def _public_base_url() -> str:
+    """Public origin for user-facing redirects + email links. Never derived
+    from the request. Caller should rstrip('/') if appending a path."""
+    return (os.getenv("PUBLIC_URL") or os.getenv("APP_URL") or CANONICAL_PUBLIC_URL).rstrip("/")
+
 # Request/Response Models
 class SignupRequest(BaseModel):
     email: EmailStr
@@ -48,6 +70,17 @@ class AuthResponse(BaseModel):
     user: dict
     tenant_id: str
     email_confirmation_required: bool = False
+    # 2026-08-17 FIX: also expose `email` and `business_name` at the top
+    # level so the static login.html (and any other consumer) can do
+    # `data.email` / `data.business_name` without reaching into
+    # `data.user.email` (which doesn't exist in the same shape for
+    # `business_name` at all). Previously, `localStorage.setItem("email",
+    # data.email)` stored the literal string "undefined" and the dashboard's
+    # identity fell back to JWT-only or "—", which is what the user
+    # experienced as "login is not working". Mirrors what `oauth_session()`
+    # already returns for the Google sign-in path.
+    email: Optional[str] = None
+    business_name: Optional[str] = None
 
 class RefreshRequest(BaseModel):
     refresh_token: str
@@ -325,7 +358,7 @@ async def signup(request: SignupRequest):
                 clean_phone = _re.sub(r"\D", "", request.phone)
                 if clean_phone:
                     jid = f"{clean_phone}@s.whatsapp.net"
-                    app_url = os.getenv("APP_URL", "https://bijou-production.fly.dev")
+                    app_url = _public_base_url()
                     welcome_msg = (
                         f"\U0001f44b Hi {request.business_name}!\n\n"
                         f"Welcome to *Bijou AI* \U0001f389\n\n"
@@ -380,6 +413,13 @@ async def signup(request: SignupRequest):
                 user={"id": user_id, "email": request.email},
                 tenant_id=tenant_id,
                 email_confirmation_required=True,
+                # 2026-08-17: include the same top-level identity fields
+                # login() returns. The static signup.html doesn't read them
+                # today, but the dashboard does, and a missing `business_name`
+                # would surface as "undefined" / "Bijou" the first time a
+                # freshly-signed-up user lands anywhere that shows it.
+                email=request.email,
+                business_name=request.business_name,
             )
 
         return AuthResponse(
@@ -388,6 +428,11 @@ async def signup(request: SignupRequest):
             user={"id": user_id, "email": request.email},
             tenant_id=tenant_id,
             email_confirmation_required=False,
+            # 2026-08-17: same top-level identity fields as login(). Keeps
+            # the contract identical across both endpoints so consumers
+            # (static HTML + the dashboard) can rely on a single shape.
+            email=request.email,
+            business_name=request.business_name,
         )
 
     except HTTPException:
@@ -521,12 +566,38 @@ async def login(request: LoginRequest):
         if not tenant_id:
             raise HTTPException(status_code=404, detail="No tenant found for this user")
 
-        # 3. Return JWT tokens
+        # 3. Look up business_name for the resolved tenant.
+        # 2026-08-17: the static login.html reads `data.business_name` from
+        # the top level of this response and stores it in localStorage. If
+        # we don't populate it here, the dashboard falls back to "Bijou" for
+        # the shell and shows "undefined" anywhere else. We use maybe_single()
+        # so a missing tenant row returns None instead of a 500.
+        business_name: Optional[str] = None
+        try:
+            t_row = (
+                db.table("tenants")
+                .select("business_name")
+                .eq("id", tenant_id)
+                .maybe_single()
+                .execute()
+            )
+            t_data = getattr(t_row, "data", None) if t_row else None
+            if isinstance(t_data, dict):
+                business_name = t_data.get("business_name")
+        except Exception as biz_err:
+            # Non-fatal: login itself succeeded, just no business_name
+            # available. The dashboard has fallbacks (BUSINESS_NAME || "Bijou")
+            # so the user still gets a usable shell.
+            logger.warning("Could not load business_name for tenant %s: %s", tenant_id, biz_err)
+
+        # 4. Return JWT tokens + identity fields the dashboard expects
         return AuthResponse(
             access_token=auth_response.session.access_token,
             refresh_token=auth_response.session.refresh_token,
             user={"id": user_id, "email": request.email},
             tenant_id=tenant_id,
+            email=request.email,
+            business_name=business_name,
         )
 
     except HTTPException:
@@ -573,13 +644,22 @@ async def oauth_session(authorization: Optional[str] = Header(None)):
         if not tenant_id:
             raise HTTPException(
                 status_code=404,
-                detail="No tenant is registered to this Google account's email.",
+                detail="No tenant is registered to this Google account's email. Please sign up first.",
             )
         biz = (
             db.table("tenants").select("business_name").eq("id", tenant_id).limit(1).execute()
         )
+        # 2026-08-17 FIX: also surface the refresh_token so the static
+        # auth-callback.html can store it in localStorage the same way the
+        # email/password login path does. Without this, the dashboard's
+        # session-refresh-on-401 has no refresh token to fall back on and
+        # the user gets signed out 60 min later instead of being silently
+        # refreshed. Falls back to the access token if the Supabase client
+        # can't surface one (older supabase-py).
+        refresh_token = getattr(getattr(user_resp, "session", None), "refresh_token", None) or ""
         return {
             "access_token": token,
+            "refresh_token": refresh_token,
             "tenant_id": tenant_id,
             "email": user.email,
             "business_name": (biz.data[0]["business_name"] if biz.data else None),
@@ -629,9 +709,12 @@ async def reset_password(request: MagicLinkRequest):
         raise HTTPException(status_code=400, detail="Email address is required")
 
     try:
-        # Get the app URL for redirect
-        app_url = os.getenv("APP_URL", "https://bijou-production.fly.dev")
-        redirect_url = f"{app_url}/reset-password"
+        # Get the app URL for the password-reset link. 2026-08-17 FIX:
+        # use the canonical public URL (not request.base_url, not the Fly
+        # internal host) so the email links to the user-facing domain and
+        # the user lands back on the dashboard, not on a raw Fly machine
+        # URL with a cert warning. Matches the helper in google_oauth.py.
+        redirect_url = f"{_public_base_url()}/reset-password"
 
         # Send password recovery email via Supabase Auth
         db.auth.reset_password_email(
@@ -757,14 +840,14 @@ async def send_magic_link(request: MagicLinkRequest):
     if not tdata:
         raise HTTPException(status_code=404, detail="No account found with that email.")
 
-    # Construct Magic Link URL — read from env only, no hardcoded domain
+    # Construct Magic Link URL. 2026-08-17 FIX: prefer the canonical public
+    # base via `_public_base_url()` so the link lands on app.mybijou.xyz
+    # (or whatever PUBLIC_URL is set to), not on the Fly internal host.
+    # LOGIN_URL is honored first so tests/overrides can point at a
+    # different path without touching env defaults.
     login_url = os.getenv("LOGIN_URL")
     if not login_url:
-        app_url = os.getenv("APP_URL", "").rstrip("/")
-        if not app_url:
-            logging.error("Neither LOGIN_URL nor APP_URL env var is set — cannot build magic link")
-            raise HTTPException(status_code=500, detail="Login system misconfigured. Contact support.")
-        login_url = f"{app_url}/static/login.html"
+        login_url = f"{_public_base_url()}/static/login.html"
 
     # NOTE (2026-08-06): use the validated `tdata` guard variable rather
     # than raw `tenant.data[...]` — if the tenant is missing or the column

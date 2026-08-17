@@ -58,11 +58,20 @@
       const SUPABASE_ANON_KEY =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxyd3psdWpvbXVremp5a2FmbWljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwNzA2ODMsImV4cCI6MjA4NDY0NjY4M30.ZJSvmh0Oa_51rfr0TrTSjS4OdszrUCe5Fmsnfk9X-6U";
 
-      function fail(text) {
+      function fail(text, recovery) {
         document.getElementById("spinner").style.display = "none";
         document.getElementById("msg").textContent = "Sign-in failed";
-        document.getElementById("err").innerHTML =
-          text + '<br/><br/><a href="/login">← Back to login</a>';
+        // 2026-08-17 FIX: when the backend says "no tenant for this Google
+        // account" (HTTP 404), this is almost always a NEW user who landed
+        // here via the "Sign in with Google" button on /login. The right
+        // recovery isn't "back to login" — it's to send them through the
+        // /signup flow with the same Google identity, so Supabase auto-links
+        // the auth row to the tenant we create. The old message bounced
+        // them back to /login, which is a dead end for new users.
+        const link = recovery && recovery.href && recovery.label
+          ? `<a href="${recovery.href}">${recovery.label}</a>`
+          : '<a href="/login">← Back to login</a>';
+        document.getElementById("err").innerHTML = text + "<br/><br/>" + link;
       }
 
       (async () => {
@@ -88,6 +97,17 @@
           });
           const data = await resp.json();
           if (!resp.ok) {
+            // 404 from /api/auth/oauth-session means the Supabase user
+            // exists but no tenant is linked to their email yet — i.e. a
+            // brand-new Google user who clicked "Sign in with Google" on
+            // /login. Send them to /signup with a hint so they don't
+            // re-do the Google round-trip on the signup page.
+            if (resp.status === 404) {
+              return fail(
+                data.detail || "No account is registered to this Google account's email.",
+                { href: "/signup?via=google", label: "Create a Bijou account →" }
+              );
+            }
             return fail(data.detail || "Could not resolve your account.");
           }
 
