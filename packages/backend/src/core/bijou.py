@@ -542,6 +542,16 @@ def _include_routers():
         except ImportError as e:
             logger.warning(f"⚠️ Could not import connectors API: {e}")
 
+    # Nango integration-connection API — replaces the Composio scaffold above.
+    # Only mounted when a Nango secret key is configured.
+    if os.getenv("NANGO_SECRET_KEY") or os.getenv("NANGO_API_KEY"):
+        try:
+            from src.connectors.nango_api import router as nango_router
+            app.include_router(nango_router)
+            logger.info("✅ Nango integrations API routes included")
+        except ImportError as e:
+            logger.warning(f"⚠️ Could not import Nango integrations API: {e}")
+
     try:
         from src.saas.onboarding_api import router as onboarding_router
         app.include_router(onboarding_router)
@@ -2254,6 +2264,7 @@ class BijouAI:
                                 await self._save_message(
                                     chat_jid, tenant_id, "user", content or "",
                                     device_jid=_device_jid, chat_type=_chat_type,
+                                    media_url=media_url, media_type=media_type,
                                 )
                                 # Update conversations table so inbox shows latest message
                                 if self.db_type == "supabase" and self.db_conn:
@@ -2923,6 +2934,12 @@ Use `/quiet` to reduce my chattiness!
             # Phase 4: Process media if present
             # Process media using Gemini's native multimodal capabilities
             media_insight = None
+            # media_mime: best-effort content-type captured from the bridge's
+            # download response, so human agents can render the raw
+            # attachment (see _save_message media_url/media_type/media_mime).
+            # Stays None on the human-takeover early-return path (line ~2254)
+            # since that path never downloads the media.
+            media_mime = None
             if media_type and media_url:
                 try:
                     logger.info(
@@ -2947,6 +2964,8 @@ Use `/quiet` to reduce my chattiness!
                             timeout=30
                         )
                     logger.info(f"   Download response: HTTP {media_response.status_code}")
+                    if media_response.status_code == 200:
+                        media_mime = media_response.headers.get("content-type")
 
                     # 2026-08-22 FIX: this download had NO size cap at all —
                     # httpx.get() buffers the entire body into memory
@@ -3943,6 +3962,7 @@ Use `/quiet` to reduce my chattiness!
             await self._save_message(
                 chat_jid, tenant_id, "user", enhanced_content,
                 device_jid=_device_jid, chat_type=_chat_type,
+                media_url=media_url, media_type=media_type, media_mime=media_mime,
             )
             await self._save_message(
                 chat_jid, tenant_id, "assistant", response,
@@ -5563,6 +5583,9 @@ BE HELPFUL - Answer directly, then stop."""
         device_jid: Optional[str] = None,
         chat_type: str = "individual",
         is_system_event: bool = False,
+        media_url: Optional[str] = None,
+        media_type: Optional[str] = None,
+        media_mime: Optional[str] = None,
     ):
         """
         Save a message to the messages table (Supabase).
@@ -5573,6 +5596,12 @@ BE HELPFUL - Answer directly, then stop."""
           - chat_type        "individual" | "group"
           - is_system_event  True for internal/system messages, False for real chat
           - conversation_key Tenant-scoped composite key computed internally
+
+        media_url/media_type/media_mime (added in add_message_media_columns.sql,
+        2026-08-23): the customer's raw WhatsApp attachment, so a human agent
+        taking over a chat can see the actual photo/voice note/file instead of
+        only the AI's text summary of it. Callers pass these only for the
+        inbound customer message when media is present; left None otherwise.
 
         Note: conversation_key is computed here — callers must NOT pass it.
         Note: phone_jid is resolved here only when chat_jid ends with @lid
@@ -5625,6 +5654,10 @@ BE HELPFUL - Answer directly, then stop."""
                         "chat_type": chat_type,
                         "is_system_event": is_system_event,
                         "conversation_key": conv_key,
+                        # ── New columns (add_message_media_columns.sql) ──────
+                        "media_url": media_url,
+                        "media_type": media_type,
+                        "media_mime": media_mime,
                     }
                 ).execute()
 
