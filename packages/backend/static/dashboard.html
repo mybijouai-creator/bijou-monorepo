@@ -65,10 +65,19 @@
         --text-mid: #9aa7a4;    /* secondary text (AA-safe) */
         --accent: #10b981;      /* emerald = live / on-duty / primary action */
         --accent-hi: #34d399;
-        --premium: #c9a961;     /* gold = Bijou identity / premium moments */
-        --premium-pale: #e8d4a0;
+        --premium: #E3B457;     /* gold = Bijou identity / premium moments — Signal Gem 2026 */
+        --premium-pale: #F5DC9E;
         --danger: #ef4444;
         --info: #3b82f6;
+
+        /* Signal Gem brand tokens (canonical — mirror of landing index.html :root).
+           Use these for any brand-coloured UI (gem, wordmark, CTAs). */
+        --bj-green:      #0B3B2E;
+        --bj-green-deep: #072A1F;
+        --bj-gold:       #E3B457;
+        --bj-gold-light: #F5DC9E;
+        --bj-cream:      #F7F4EC;
+        --bj-ink:        #0A0A0A;
       }
       body {
         background: var(--canvas);
@@ -645,6 +654,9 @@
         "life-buoy": '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/>',
         send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
         dot: '<circle cx="12" cy="12" r="3"/>',
+        // Feather-style volume icons for the Signal Gem mute toggle.
+        "volume-2": '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>',
+        "volume-x": '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>',
       };
       function Icon({ name, size = 18, className = "", title, style }) {
         return (
@@ -794,6 +806,11 @@
         const scrollBoxRef = useRef(null); // the scrollable message container
         const atBottomRef = useRef(true); // track if user is scrolled to bottom
         const prevMsgCount = useRef(0); // detect new messages
+        // Signal Gem: 180ms debounce on typing → setState("listening"). Shared
+        // with handleReplyChange (sets it) and sendReply/selected-change (clear it).
+        // Declared between sendReply and handleReplyChange in source order, but JS
+        // const TDZ doesn't bite because both functions are only called at runtime.
+        const replyListenTimer = useRef(null);
 
         // ── Helpers ───────────────────────────────────────────────────────────────
         function scrollToBottom(force = false) {
@@ -841,13 +858,53 @@
               `/api/dashboard/messages/${encodeURIComponent(jid)}`,
             );
             if (selectedRef.current !== jid) return; // user switched away
-            setConversations((prev) =>
-              prev.map((conv) =>
+            setConversations((prev) => {
+              // Capture the previous message list BEFORE we overwrite it, so we
+              // can detect new arrivals and fire Signal Gem audio cues. The
+              // pre-existing prevMsgCount.current ref already filters out
+              // initial loads, so we don't get a notify chime every time the
+              // agent opens a conversation.
+              const existing = prev.find((c) => c.chat_jid === jid);
+              const prevMsgs = (existing && existing.messages) || [];
+              const nextMsgs = Array.isArray(msgs) ? msgs : [];
+              if (nextMsgs.length > prevMsgs.length) {
+                const newOnes = nextMsgs.slice(prevMsgs.length);
+                // Only fire cues for the most recent new message — multiple
+                // backfill inserts in one poll would otherwise stack chimes.
+                const latest = newOnes[newOnes.length - 1];
+                if (latest) {
+                  const role = latest.role;
+                  if (role === "user") {
+                    // Inbound customer message → soft notify chime.
+                    try { window.BjAudio && window.BjAudio.play && window.BjAudio.play("notify"); } catch (_) {}
+                  } else if (role === "assistant" || role === "bot") {
+                    // Bot auto-reply in a still-AI-handled conversation → speaking
+                    // pulse for a length-proportional window. The agent's own sent
+                    // message is already acked by sendReply's tick, so this fires
+                    // only on Bijou's spontaneous replies.
+                    const text = (latest.text || latest.body || latest.message || latest.content || "") + "";
+                    const dur = Math.min(2400, 600 + Math.floor(text.length / 80) * 350);
+                    try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("speaking"); } catch (_) {}
+                    setTimeout(() => {
+                      // Only return to idle if the gem is still in "speaking".
+                      // Otherwise the user has already transitioned to listening
+                      // (typing) or thinking (a new send) and we shouldn't clobber.
+                      try {
+                        const bj = document.querySelector(".bj-gem");
+                        if (bj && bj.getAttribute("data-bj-state") === "speaking") {
+                          window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("idle");
+                        }
+                      } catch (_) {}
+                    }, dur);
+                  }
+                }
+              }
+              return prev.map((conv) =>
                 conv.chat_jid === jid
-                  ? { ...conv, messages: Array.isArray(msgs) ? msgs : [] }
+                  ? { ...conv, messages: nextMsgs }
                   : conv,
-              ),
-            );
+              );
+            });
           } catch (e) {
             console.error("fetchMessages error:", e);
           }
@@ -925,6 +982,15 @@
           setNewMsgAlert(false);
           // Scroll to bottom immediately when switching conversations
           setTimeout(() => scrollToBottom(true), 50);
+          // Signal Gem: cancel any pending listening debounce and force the gem
+          // back to "idle" so a typing-state from the previous chat doesn't
+          // leak into the new one (would visibly pulse "listening" while the
+          // agent is just reading the new chat).
+          if (replyListenTimer.current) {
+            clearTimeout(replyListenTimer.current);
+            replyListenTimer.current = null;
+          }
+          try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("idle"); } catch (_) {}
         }, [selected]);
 
         // ── Actions ────────────────────────────────────────────────────────────────
@@ -960,6 +1026,15 @@
         async function sendReply(chatJid) {
           if (!reply.trim()) return;
           setSending(true);
+          // Signal Gem: cancel any pending listening debounce (prevents the
+          // keystroke debounce from slamming us back to "listening" mid-reply),
+          // soft-confirm send, and flip to "thinking" while the API is in flight.
+          if (replyListenTimer.current) {
+            clearTimeout(replyListenTimer.current);
+            replyListenTimer.current = null;
+          }
+          try { window.BjAudio && window.BjAudio.tick && window.BjAudio.tick(); } catch (_) {}
+          try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("thinking"); } catch (_) {}
           try {
             await api("/api/dashboard/send-message", {
               method: "POST",
@@ -970,8 +1045,19 @@
             // Immediately refresh messages so sent reply appears
             await fetchMessages(chatJid);
             scrollToBottom(true);
+            // Signal Gem: short 900ms "speaking" pulse on success — the agent
+            // already knows they sent, so the pulse is just a brief confirmation.
+            try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("speaking"); } catch (_) {}
+            setTimeout(() => {
+              try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("idle"); } catch (_) {}
+            }, 900);
           } catch (e) {
             showToast("Send failed: " + e.message);
+            // Signal Gem: brief 700ms "thinking" then "idle" on error (visually
+            // distinct from success and shorter so the UI feels responsive).
+            setTimeout(() => {
+              try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("idle"); } catch (_) {}
+            }, 700);
           }
           setSending(false);
         }
@@ -989,6 +1075,20 @@
             setSlashIdx(0);
           } else {
             setSlashMenu(null);
+          }
+          // Signal Gem: 180ms debounce → setState("listening") while the agent
+          // is typing. Clearing the box returns to "idle" immediately. Without
+          // the debounce, setState would fire on every keystroke and thrash the
+          // gem's CSS animation. sendReply cancels the pending timer so a
+          // mid-typing Send click doesn't slam us back to "listening" after the
+          // reply is already in flight.
+          if (replyListenTimer.current) clearTimeout(replyListenTimer.current);
+          if (val.length > 0) {
+            replyListenTimer.current = setTimeout(() => {
+              try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("listening"); } catch (_) {}
+            }, 180);
+          } else {
+            try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("idle"); } catch (_) {}
           }
         }
 
@@ -6372,14 +6472,27 @@
           setInput("");
           setMsgs((m) => [...m, { role: "user", text }]);
           setSending(true);
+          // Signal Gem: soft confirm on send, thinking while API in flight.
+          try { window.BjAudio && window.BjAudio.tick && window.BjAudio.tick(); } catch (_) {}
+          try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("thinking"); } catch (_) {}
           try {
             const r = await api("/api/setup/test-message", {
               method: "POST", body: JSON.stringify({ message: text }),
             });
             const reply = (r && r.reply) || (r && r.error) || "No reply — make sure Bijou is set up (AI Training).";
             setMsgs((m) => [...m, { role: "bijou", text: reply, error: !!(r && r.ok === false) }]);
+            // Signal Gem: speaking for length-proportional window, then idle.
+            const dur = Math.min(2200, 600 + Math.floor(reply.length / 80) * 350);
+            try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("speaking"); } catch (_) {}
+            setTimeout(() => {
+              try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("idle"); } catch (_) {}
+            }, dur);
           } catch (e) {
             setMsgs((m) => [...m, { role: "bijou", text: "Test failed: " + (e.message || "error"), error: true }]);
+            // Signal Gem: brief thinking→idle on error (avoids stuck-in-speaking).
+            setTimeout(() => {
+              try { window.BjAudio && window.BjAudio.setState && window.BjAudio.setState("idle"); } catch (_) {}
+            }, 800);
           } finally {
             setSending(false);
           }
@@ -6391,7 +6504,7 @@
               <div className="flex items-center gap-2">
                 <Icon name="bot" size={18} style={{ color: "var(--accent)" }} />
                 <span className="font-semibold" style={{ color: "var(--text-hi)" }}>Test Bijou</span>
-                <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: "#c9a96118", color: "var(--premium-pale)", border: "1px solid #c9a96140" }}>Sandbox</span>
+                <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: "rgba(227,180,87,0.10)", color: "var(--premium-pale)", border: "1px solid rgba(227,180,87,0.25)" }}>Sandbox</span>
               </div>
               <p className="text-sm mt-1" style={{ color: "var(--text-mid)" }}>
                 Chat with your AI exactly as a customer would. Nothing is sent to real customers and nothing is saved — try it before you go live.
@@ -6516,7 +6629,7 @@
             {/* Today's tally */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <StatCard label="Conversations" value={conv} icon="message-circle" />
-              <StatCard label="AI-handled" value={aiPct + "%"} icon="bot" color="#c9a961" />
+              <StatCard label="AI-handled" value={aiPct + "%"} icon="bot" color="#E3B457" />
               <StatCard label="Messages today" value={stats?.messages_today ?? 0} icon="send" />
               <StatCard label="Leads today" value={stats?.leads_generated_today ?? 0} icon="users" />
             </div>
@@ -6600,6 +6713,28 @@
         const toggleLang = () => setLang(l => { const nl = l==="en"?"my":"en"; localStorage.setItem("bijou_lang",nl); return nl; });
         const [installPrompt, setInstallPrompt] = useState(null);
         const [showInstallBanner, setShowInstallBanner] = useState(false);
+
+        // Signal Gem mute state — single source of truth is body[data-bj-audio]
+        // (the controller writes it on toggle and reads it on init). React state
+        // mirrors it so the sidebar button can re-render on every change.
+        const [soundMuted, setSoundMuted] = useState(
+          () => document.body.getAttribute("data-bj-audio") === "off",
+        );
+        const toggleSoundMute = () => {
+          const next = !soundMuted;
+          setSoundMuted(next);
+          try { window.BjAudio && window.BjAudio.mute && window.BjAudio.mute(next); } catch (_) {}
+        };
+        // Keep React state in sync if the controller (or DevTools) flips the
+        // body attribute from elsewhere. Cheap — only fires on actual mutations.
+        useEffect(() => {
+          const obs = new MutationObserver(() => {
+            const m = document.body.getAttribute("data-bj-audio") === "off";
+            setSoundMuted((prev) => (prev === m ? prev : m));
+          });
+          obs.observe(document.body, { attributes: true, attributeFilter: ["data-bj-audio"] });
+          return () => obs.disconnect();
+        }, []);
 
         // Escalation notifications
         const [escalNotifCount, setEscalNotifCount] = useState(0);
@@ -6756,26 +6891,35 @@
                   style={{ borderColor: "#233033", minHeight: "64px" }}
                 >
                   {isIconOnly ? (
-                    <button
-                      onClick={() => setCollapsed(false)}
-                      className="mx-auto"
-                      title="Expand sidebar"
-                    >
-                      <span
-                        className="bj-gem state-idle"
-                        data-bj-state="idle"
-                        style={{ display: "inline-block", width: 32, height: 32 }}
+                    <div className="flex flex-col items-center gap-1.5 mx-auto">
+                      <button
+                        onClick={() => setCollapsed(false)}
+                        title="Expand sidebar"
                       >
-                        <span className="m" style={{ display: "block", width: 32, height: 32 }}>
-                          <svg viewBox="0 0 100 100" width="32" height="32" aria-label="Bijou AI">
-                            <path className="gem-body" fill="#E3B457" d="M30,12 L70,12 L88,40 L70,73 L50,73 L26,92 L33,73 L12,40 Z" />
-                            <g className="bj-facets" fill="none" stroke="#0B3B2E" strokeWidth="1.6" strokeLinejoin="round" opacity="0.55">
-                              <path className="facet-stroke" d="M40,26 L60,26 L68,40 L60,54 L40,54 L32,40 Z" />
-                            </g>
-                          </svg>
+                        <span
+                          className="bj-gem state-idle"
+                          data-bj-state="idle"
+                          style={{ display: "inline-block", width: 32, height: 32 }}
+                        >
+                          <span className="m" style={{ display: "block", width: 32, height: 32 }}>
+                            <svg viewBox="0 0 100 100" width="32" height="32" aria-label="Bijou AI">
+                              <path className="gem-body" fill="#E3B457" d="M30,12 L70,12 L88,40 L70,73 L50,73 L26,92 L33,73 L12,40 Z" />
+                              <g className="bj-facets" fill="none" stroke="#0B3B2E" strokeWidth="1.6" strokeLinejoin="round" opacity="0.55">
+                                <path className="facet-stroke" d="M40,26 L60,26 L68,40 L60,54 L40,54 L32,40 Z" />
+                              </g>
+                            </svg>
+                          </span>
                         </span>
-                      </span>
-                    </button>
+                      </button>
+                      <button
+                        onClick={toggleSoundMute}
+                        className="p-1 rounded-md flex items-center justify-center transition-colors hover:bg-white hover:bg-opacity-5"
+                        title={soundMuted ? "Unmute Signal Gem" : "Mute Signal Gem"}
+                        style={{ color: soundMuted ? "#9aa7a4" : "#E3B457" }}
+                      >
+                        <Icon name={soundMuted ? "volume-x" : "volume-2"} size={12} />
+                      </button>
+                    </div>
                   ) : (
                     <>
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -6797,17 +6941,27 @@
                           Bijou AI
                         </span>
                       </div>
-                      <button
-                        onClick={() => {
-                          setCollapsed(true);
-                          setMobileOpen(false);
-                        }}
-                        className="p-1.5 rounded-md flex-shrink-0 hidden lg:flex items-center justify-center transition-colors hover:bg-white hover:bg-opacity-5"
-                        title="Collapse sidebar"
-                        style={{ color: "#9aa7a4" }}
-                      >
-                        <Icon name="chevron-left" size={14} />
-                      </button>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={toggleSoundMute}
+                          className="p-1.5 rounded-md flex items-center justify-center transition-colors hover:bg-white hover:bg-opacity-5"
+                          title={soundMuted ? "Unmute Signal Gem" : "Mute Signal Gem"}
+                          style={{ color: soundMuted ? "#9aa7a4" : "#E3B457" }}
+                        >
+                          <Icon name={soundMuted ? "volume-x" : "volume-2"} size={14} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setCollapsed(true);
+                            setMobileOpen(false);
+                          }}
+                          className="p-1.5 rounded-md hidden lg:flex items-center justify-center transition-colors hover:bg-white hover:bg-opacity-5"
+                          title="Collapse sidebar"
+                          style={{ color: "#9aa7a4" }}
+                        >
+                          <Icon name="chevron-left" size={14} />
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
@@ -7099,18 +7253,34 @@
       ReactDOM.createRoot(document.getElementById("root")).render(<App />);
     </script>
 
-    <!-- Signal Gem: audio controller (init on first user interaction) -->
+    <!-- Signal Gem: audio controller.
+         The controller self-initialises on DOMContentLoaded and exposes itself
+         as `window.BjAudio` (NOT `BijouAudio` — that was the old name; calling
+         BijouAudio.init() against the undefined global was a no-op).
+         MP3s live in /static/ (this app's static dir), so override the
+         controller's default `audio-identity/` base BEFORE the script loads. -->
+    <script>window.BJ_AUDIO_BASE = '/static/';</script>
     <script src="/static/signal-gem-audio.js"></script>
     <script>
-      // Wire BijouAudio for the dashboard
-      if (typeof BijouAudio !== 'undefined') {
-        BijouAudio.init({
-          intro:  '/static/bj-intro.mp3',
-          tick:   '/static/bj-tick.mp3',
-          notify: '/static/bj-notify.mp3',
-          engage: '/static/bj-engage.mp3'
-        });
-      }
+      // Per-event wiring (defensive — wrapped in try/catch so a missing/unloaded
+      // BjAudio is a silent no-op, not a console error during the first second
+      // of page load before the controller script runs):
+      //   - TestBijouModule.send (sandbox chat): tick + setState("thinking")
+      //     on user send, setState("speaking") for length-proportional window
+      //     on reply, brief thinking→idle on error.
+      //   - InboxModule.sendReply (live human-handoff): tick + setState("thinking")
+      //     while API in flight, 900ms setState("speaking") on success, brief
+      //     thinking→idle on error.
+      //   - InboxModule.handleReplyChange (agent typing in reply box): 180ms-
+      //     debounced setState("listening") on keystroke, setState("idle")
+      //     when the box clears.
+      //   - InboxModule fetchMessages poll: play("notify") on inbound customer
+      //     messages (role === "user"), setState("speaking") for length-
+      //     proportional window on bot auto-replies.
+      //   - InboxModule selected change effect: cancel any pending
+      //     replyListenTimer and force setState("idle") so a typing-state from
+      //     the previous chat doesn't leak into the new one.
+      //   - Mute toggle: see soundMuted/toggleSoundMute in App.
     </script>
   </body>
 </html>
