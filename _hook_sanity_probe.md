@@ -1,1 +1,0 @@
-# hook sanity check
