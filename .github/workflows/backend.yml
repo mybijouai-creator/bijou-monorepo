@@ -60,16 +60,24 @@ jobs:
           # f-string bugs. F821 means a guaranteed NameError when that line
           # runs, so it always gates.
           #
-          # Covers 142 of 147 files under src/. The 5 exclusions carry
-          # PRE-EXISTING F821 defects (found 2026-08-10) and are excluded so
-          # this gate is green from day one and catches every NEW regression:
+          # Covers 143 of 147 files under src/. The 4 remaining exclusions
+          # carry PRE-EXISTING F821 defects (found 2026-08-10) and are
+          # excluded so this gate is green from day one and catches every
+          # NEW regression:
           #   src/core/bijou.py:5464            undefined `httpx`
           #   src/core/bijou.py:3100            undefined `msg_dict`  (logic bug)
           #   src/integrations/webhooks.py:68   undefined `logger`
           #   src/core/dashboard_api.py:119,223,335  undefined `SupabaseDB`
-          #   src/saas/escalation_api.py:348,350     undefined `Enum`
           #   src/core/copilot_methods.py:37    undefined `Command`, `Optional`
           # tests/ has 6 more (e.g. tests/load/test_call_load.py:558 `os`).
+          #
+          # 2026-08-22: src/saas/escalation_api.py:348,350 (undefined `Enum`)
+          # fixed — added the missing `from enum import Enum` — and dropped
+          # from this list. Note: that whole router was never mounted in
+          # bijou.py's _include_routers() (confirmed via grep), so the bug
+          # was unreachable dead code, not a live crash — fixed anyway since
+          # it's exactly the kind of latent defect this gate exists to catch
+          # if/when someone does wire the router up.
           #
           # Fix these, then delete the matching --exclude line. Do NOT widen
           # the scope before they are green, or this gate gets deleted again.
@@ -78,9 +86,8 @@ jobs:
             --exclude src/core/bijou.py \
             --exclude src/core/copilot_methods.py \
             --exclude src/core/dashboard_api.py \
-            --exclude src/integrations/webhooks.py \
-            --exclude src/saas/escalation_api.py
-          echo "PASS: no ruff errors in blocking scope (142/147 src files)"
+            --exclude src/integrations/webhooks.py
+          echo "PASS: no ruff errors in blocking scope (143/147 src files)"
           # Advisory tier: full ruleset, reported but non-blocking until the
           # existing backlog is cleared. Promote to blocking once green.
           echo "--- advisory: full ruff ---"

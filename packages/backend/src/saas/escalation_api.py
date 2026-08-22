@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import Optional, Dict, List
 from pydantic import BaseModel
 from datetime import datetime
+from enum import Enum
 from loguru import logger
 
 from .handover_system import HandoverSystem, EscalationPriority, EscalationStatus
