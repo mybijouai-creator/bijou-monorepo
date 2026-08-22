@@ -2948,7 +2948,36 @@ Use `/quiet` to reduce my chattiness!
                         )
                     logger.info(f"   Download response: HTTP {media_response.status_code}")
 
-                    if media_response.status_code == 200:
+                    # 2026-08-22 FIX: this download had NO size cap at all —
+                    # httpx.get() buffers the entire body into memory
+                    # (media_response.content) regardless of size. The
+                    # dedicated MediaHandler class (media_handler.py) already
+                    # implements a proper streaming 25MB cap but is never
+                    # called from this path (confirmed: no other reference in
+                    # this file). A full streaming rewrite here would touch
+                    # ~9 downstream .content/.headers references across the
+                    # image/audio/document branches below — too invasive to
+                    # do safely in one pass. This is the contained version:
+                    # reject anything over the configured cap AFTER download
+                    # (same buffering cost as before, but no oversized blob
+                    # gets forwarded to Gemini/docx/openpyxl parsing below).
+                    _media_max_bytes = int(os.getenv("MEDIA_MAX_SIZE_MB", "25")) * 1024 * 1024
+                    _media_too_large = (
+                        media_response.status_code == 200
+                        and len(media_response.content) > _media_max_bytes
+                    )
+                    if _media_too_large:
+                        logger.warning(
+                            f"⚠️ Media from {media_url} is {len(media_response.content) / 1024 / 1024:.1f}MB, "
+                            f"exceeds {_media_max_bytes / 1024 / 1024:.0f}MB cap — rejecting before processing"
+                        )
+                        if media_type in ["audio", "ptt"]:
+                            media_insight = "🎤 That voice message is too large for me to process. Could you send a shorter one or type your message instead?"
+                        elif media_type in ["image", "sticker"]:
+                            media_insight = "📷 That image is too large for me to process. Could you send a smaller one?"
+                        else:
+                            media_insight = f"📎 That {media_type} is too large for me to process. Could you send a smaller file?"
+                    elif media_response.status_code == 200:
                         # Gemini can process images and audio natively
                         if media_type in ["image", "sticker"]:
                         # Image processing with Gemini Vision
