@@ -4852,6 +4852,13 @@
         const [calendarTesting, setCalendarTesting] = useState(false);
         const [calendarTestResult, setCalendarTestResult] = useState(null);
 
+        // 2026-08-23: per-tenant tool gating (settings/tools API added this
+        // session). enabledTools=[] means "all tools on" (matches every
+        // existing tenant's current behavior — see function_caller.py).
+        const [toolCatalog, setToolCatalog] = useState([]);
+        const [enabledTools, setEnabledTools] = useState([]);
+        const [toolsSaving, setToolsSaving] = useState(false);
+
         // Email config state (Migration 022)
         const [emailConfig, setEmailConfig] = useState({
           smtp_host: "",
@@ -4908,7 +4915,12 @@
             api(`/api/payment/tenant/usage?tenant_id=${TENANT_ID}`).catch(() => null),
             api(`/api/dashboard/settings/vertical`).catch(() => null),
             api(`/api/dashboard/settings/verticals`).catch(() => null),
-          ]).then(([d, s, bl, bp, cal, email, billing, vert, vertList]) => {
+            api(`/api/dashboard/settings/tools`).catch(() => null),
+          ]).then(([d, s, bl, bp, cal, email, billing, vert, vertList, tools]) => {
+            if (tools) {
+              setToolCatalog(tools.catalog || []);
+              setEnabledTools(tools.enabled || []);
+            }
             if (vert?.vertical_id) setTenantVertical(vert.vertical_id);
             if (vertList?.verticals) setAvailableVerticals(vertList.verticals);
             setDeviceStatus(d);
@@ -5567,6 +5579,65 @@
                     </button>
                   </div>
                 )}
+              </div>
+            ),
+          },
+          {
+            title: "🔧 AI Tools",
+            desc: "Choose which tools your AI can use. Leave all checked to keep everything on (the default).",
+            content: (
+              <div className="mt-4 space-y-2">
+                {toolCatalog.length === 0 ? (
+                  <p className="text-xs" style={{ color: "var(--text-mid)" }}>No tools available.</p>
+                ) : (
+                  toolCatalog.map((t) => {
+                    const isOn = enabledTools.length === 0 || enabledTools.includes(t.name);
+                    return (
+                      <label key={t.name} className="flex items-start gap-2.5 py-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isOn}
+                          onChange={(e) => {
+                            // Starting from "all on" (empty list), unchecking one
+                            // tool means switching to an explicit allow-list of
+                            // every OTHER tool — not just this one, since the
+                            // backend treats [] as "everything," not "nothing."
+                            const base = enabledTools.length === 0 ? toolCatalog.map((c) => c.name) : enabledTools;
+                            const next = e.target.checked
+                              ? [...new Set([...base, t.name])]
+                              : base.filter((n) => n !== t.name);
+                            setEnabledTools(next.length === toolCatalog.length ? [] : next);
+                          }}
+                          className="mt-0.5"
+                        />
+                        <div>
+                          <div className="text-sm font-medium" style={{ color: "var(--text-hi)" }}>{t.name}</div>
+                          {t.description && <div className="text-xs" style={{ color: "var(--text-mid)" }}>{t.description}</div>}
+                        </div>
+                      </label>
+                    );
+                  })
+                )}
+                <button
+                  onClick={async () => {
+                    setToolsSaving(true);
+                    try {
+                      await api("/api/dashboard/settings/tools", {
+                        method: "PUT",
+                        body: JSON.stringify({ enabled_tools: enabledTools }),
+                      });
+                      showToast("Tool settings saved", "success");
+                    } catch (e) {
+                      showToast("Failed to save: " + e.message, "error");
+                    }
+                    setToolsSaving(false);
+                  }}
+                  disabled={toolsSaving || toolCatalog.length === 0}
+                  className="mt-2 px-4 py-2 rounded-lg text-sm font-semibold"
+                  style={{ background: "var(--accent)", color: "#04121a", opacity: toolsSaving ? 0.6 : 1 }}
+                >
+                  {toolsSaving ? "Saving…" : "Save Tool Settings"}
+                </button>
               </div>
             ),
           },
