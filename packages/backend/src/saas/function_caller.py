@@ -106,7 +106,14 @@ class FunctionCaller:
         functions = []
 
         # Email functions (if Gmail tool available)
-        if self.tool_orchestrator and hasattr(self.tool_orchestrator, "gmail_tool"):
+        # 2026-08-22 FIX: hasattr() alone is always True here — ToolOrchestrator's
+        # __init__ sets self.gmail_tool = None unconditionally, so this
+        # advertised send_email/search_email to the model even when Gmail
+        # never initialized (which it currently never does — see gmail_tool.py's
+        # desktop-OAuth flow incompatible with the service-account credential
+        # path.production sets). Match the truthiness check the Calendar
+        # branch below already uses.
+        if self.tool_orchestrator and getattr(self.tool_orchestrator, "gmail_tool", None):
             functions.extend(
                 [
                     {
@@ -929,11 +936,23 @@ class FunctionCaller:
 
             # Create escalation via HandoverSystem
             try:
-                if self.tool_orchestrator and hasattr(self.tool_orchestrator, 'handover_system') and self.tool_orchestrator.handover_system:
+                # 2026-08-22 FIX: ToolOrchestrator never actually sets a
+                # `handover_system` attribute (confirmed: grep across
+                # tool_orchestrator.py has no such assignment), so the
+                # hasattr() check was always False and this always fell
+                # into `HandoverSystem()` with no supabase_client — which
+                # makes create_escalation() unconditionally return None
+                # (handover_system.py: `if not self.enabled or not
+                # self.supabase: return None`). Pass the orchestrator's own
+                # supabase_client through so a real client actually gets
+                # written when ENABLE_HANDOVER_QUEUE is on.
+                if self.tool_orchestrator and getattr(self.tool_orchestrator, 'handover_system', None):
                     handover = self.tool_orchestrator.handover_system
                 else:
                     from src.saas.handover_system import HandoverSystem
-                    handover = HandoverSystem()
+                    handover = HandoverSystem(
+                        supabase_client=getattr(self.tool_orchestrator, 'supabase_client', None)
+                    )
 
                 escalation_id = await handover.create_escalation(
                     tenant_id=tenant_id,
@@ -942,6 +961,22 @@ class FunctionCaller:
                     priority=args.get("priority", "medium"),
                     metadata={"customer_context": args.get("customer_context", "")},
                 )
+
+                # 2026-08-22 FIX: this used to unconditionally claim success
+                # even when create_escalation() returned None (handover
+                # disabled via ENABLE_HANDOVER_QUEUE, or no supabase client)
+                # — the AI would tell a real customer "escalated to a human"
+                # when nothing was created and nobody was notified. Only
+                # claim success if a row actually got created.
+                if not escalation_id:
+                    logger.error(
+                        f"Escalation returned no id for tenant {tenant_id} "
+                        f"(handover disabled or misconfigured) — not claiming success"
+                    )
+                    return {
+                        "success": False,
+                        "error": "Escalation is not available right now. Please leave your contact details and the team will reach out.",
+                    }
 
                 return {
                     "success": True,
@@ -957,14 +992,17 @@ class FunctionCaller:
 
         # Knowledge base search
         elif function_name == "search_knowledge":
-            # Placeholder - integrate with actual knowledge base
+            # 2026-08-22 FIX: this used to return a fake positive-looking
+            # result ("Search functionality coming soon" dressed up as a
+            # real search hit), which an LLM could relay to a customer as
+            # if it were real content. Report it as unavailable instead —
+            # not implemented against any of the three knowledge tables the
+            # rest of the app writes to (knowledge_bases, knowledge_chunks,
+            # knowledge_documents); wiring this up is tracked separately.
             return {
-                "results": [
-                    {
-                        "title": "Knowledge result",
-                        "content": "Search functionality coming soon",
-                    }
-                ]
+                "success": False,
+                "results": [],
+                "message": "Knowledge base search is not yet available for this tool call.",
             }
 
         # Calculator
