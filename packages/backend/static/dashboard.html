@@ -657,6 +657,9 @@
         // Feather-style volume icons for the Signal Gem mute toggle.
         "volume-2": '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>',
         "volume-x": '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>',
+        // 2026-08-22: for the Integrations nav item — static/integrations.html
+        // already exists and works, it just had no link from the dashboard.
+        "link-2": '<path d="M15 7h3a5 5 0 0 1 5 5 5 5 0 0 1-5 5h-3m-6 0H6a5 5 0 0 1-5-5 5 5 0 0 1 5-5h3"/><line x1="8" y1="12" x2="16" y2="12"/>',
       };
       function Icon({ name, size = 18, className = "", title, style }) {
         return (
@@ -6790,6 +6793,11 @@
           { id: "calls", label: tl("calls"), icon: "phone" },
           { id: "outreach", label: "Outreach", icon: "send", href: "/outreach" },
           { id: "ai_setup", label: "AI Setup", icon: "zap", href: "/kb-wizard" },
+          // 2026-08-22 FIX: /integrations (static/integrations.html, backed
+          // by src/connectors/oauth_api.py) already existed and worked but
+          // wasn't linked from anywhere in the dashboard — a new client had
+          // no way to discover it short of typing the URL directly.
+          { id: "integrations", label: "Integrations", icon: "link-2", href: "/integrations" },
           { id: "settings", label: tl("settings"), icon: "settings" },
           { id: "help", label: tl("help_center"), icon: "life-buoy", href: "/help" },
         ];
