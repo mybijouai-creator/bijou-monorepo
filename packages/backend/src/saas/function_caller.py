@@ -96,7 +96,7 @@ class FunctionCaller:
             })
         self._connector_fn_map = {a.replace(".", "_"): a for a in self._registry}
 
-    def get_function_declarations(self) -> List[Dict[str, Any]]:
+    def get_function_declarations(self, enabled_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         Get function declarations for Gemini function calling.
 
@@ -387,9 +387,19 @@ class FunctionCaller:
                     "parameters": action.input_schema,
                 })
 
+        # 2026-08-22/23 FEATURE: per-tenant tool gating. `enabled_tools` is
+        # written into client_configs on every signup (auth_api.py) but was
+        # NEVER read anywhere — every tenant got the identical global tool
+        # set, gated only by process-wide env flags. CORRECTNESS CONSTRAINT:
+        # every existing tenant has enabled_tools=[] (empty) — empty/None
+        # MUST mean "all tools enabled" (today's behavior unchanged), never
+        # "no tools." Only a genuinely non-empty list restricts the set.
+        if enabled_tools:
+            functions = [f for f in functions if f["name"] in enabled_tools]
+
         return functions
 
-    def get_openai_tools(self) -> List[Dict[str, Any]]:
+    def get_openai_tools(self, enabled_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         Return function declarations in OpenAI tools format.
 
@@ -401,7 +411,7 @@ class FunctionCaller:
         all accept this format.
         """
         out: List[Dict[str, Any]] = []
-        for fn in self.get_function_declarations():
+        for fn in self.get_function_declarations(enabled_tools=enabled_tools):
             out.append({
                 "type": "function",
                 "function": {
@@ -449,7 +459,9 @@ class FunctionCaller:
             user_context = {}
 
         client = OpenAI(base_url=base_url, api_key=api_key)
-        tools = self.get_openai_tools() or None
+        # Per-tenant tool gating (see get_function_declarations) — caller
+        # threads the tenant's client_config.enabled_tools through user_context.
+        tools = self.get_openai_tools(enabled_tools=user_context.get("enabled_tools")) or None
 
         for _round in range(max_iterations):
             try:

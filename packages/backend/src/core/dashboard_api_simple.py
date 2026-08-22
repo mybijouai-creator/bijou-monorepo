@@ -3113,6 +3113,83 @@ async def update_calendar_configuration(
         raise HTTPException(status_code=500, detail=f"Failed to save calendar configuration: {str(e)}")
 
 
+@router.get("/settings/tools")
+async def get_tool_settings(tenant_id: str = Depends(verify_session)):
+    """
+    2026-08-22/23 FEATURE: per-tenant tool gating. Returns the full catalog
+    of tools the AI can potentially use (name + description, sourced from
+    FunctionCaller.get_function_declarations() — the same list Gemini/MiniMax
+    actually see) plus which ones this tenant has restricted to, if any.
+
+    `enabled` is empty ([]) for the overwhelming majority of tenants today —
+    that means "all tools enabled" (see function_caller.py's own comment on
+    this), NOT "no tools." The dashboard should render every catalog entry
+    checked-by-default when `enabled` is empty.
+    """
+    try:
+        from src.core.bijou import bijou_instance
+
+        catalog = []
+        if bijou_instance and getattr(bijou_instance, "function_caller", None):
+            catalog = [
+                {"name": fn["name"], "description": fn.get("description", "")}
+                for fn in bijou_instance.function_caller.get_function_declarations()
+            ]
+
+        supabase = get_supabase()
+        cfg = (
+            supabase.table("client_configs")
+            .select("enabled_tools")
+            .eq("tenant_id", tenant_id)
+            .maybe_single()
+            .execute()
+        )
+        cfg_data = getattr(cfg, "data", None) if cfg else None
+        enabled = (cfg_data or {}).get("enabled_tools") or []
+
+        return {"catalog": catalog, "enabled": enabled}
+    except Exception as e:
+        logger.error(f"❌ get_tool_settings error (tenant={tenant_id}): {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve tool settings")
+
+
+@router.put("/settings/tools")
+async def update_tool_settings(request: Request, tenant_id: str = Depends(verify_session)):
+    """
+    PUT body: {"enabled_tools": ["check_availability", "escalate_to_human", ...]}
+    Pass an empty list to re-enable every tool (see get_tool_settings docstring).
+    """
+    try:
+        body = await request.json()
+        enabled_tools = body.get("enabled_tools")
+        if not isinstance(enabled_tools, list) or not all(isinstance(x, str) for x in enabled_tools):
+            raise HTTPException(status_code=422, detail="enabled_tools must be a list of tool-name strings")
+
+        supabase = get_supabase()
+        existing = (
+            supabase.table("client_configs")
+            .select("id")
+            .eq("tenant_id", tenant_id)
+            .maybe_single()
+            .execute()
+        )
+        if getattr(existing, "data", None):
+            supabase.table("client_configs").update({"enabled_tools": enabled_tools}).eq(
+                "tenant_id", tenant_id
+            ).execute()
+        else:
+            supabase.table("client_configs").insert(
+                {"tenant_id": tenant_id, "enabled_tools": enabled_tools, "is_active": True}
+            ).execute()
+
+        return {"success": True, "enabled_tools": enabled_tools}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ update_tool_settings error (tenant={tenant_id}): {e}")
+        raise HTTPException(status_code=500, detail="Failed to save tool settings")
+
+
 @router.post("/settings/calendar/test")
 async def test_calendar_connection(
     request: Request,

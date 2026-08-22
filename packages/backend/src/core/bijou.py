@@ -4354,7 +4354,9 @@ Use `/quiet` to reduce my chattiness!
 
                     _gw_client = OpenAI(base_url=_gw_ep, api_key=_gw_key)
                     _decls = (
-                        self.function_caller.get_function_declarations()
+                        self.function_caller.get_function_declarations(
+                            enabled_tools=client_config.get("enabled_tools") if client_config else None
+                        )
                         if getattr(self, "function_caller", None) and self.function_caller.enabled
                         else []
                     )
@@ -4460,6 +4462,9 @@ Use `/quiet` to reduce my chattiness!
             # through to _call_function via the OpenAI tool-calling path.
             mm_user_context = {
                 "tenant_id": client_config.get("tenant_id") if client_config else None,
+                # Per-tenant tool gating (2026-08-22/23) — see
+                # function_caller.py's get_function_declarations().
+                "enabled_tools": client_config.get("enabled_tools") if client_config else None,
             }
             for mm_model in [m.strip() for m in mm_models if m.strip()]:
                 try:
@@ -4532,7 +4537,9 @@ Use `/quiet` to reduce my chattiness!
                     tools = None
                     if hasattr(self, 'function_caller') and self.function_caller and self.function_caller.enabled:
                         try:
-                            functions = self.function_caller.get_function_declarations()
+                            functions = self.function_caller.get_function_declarations(
+                                enabled_tools=client_config.get("enabled_tools") if client_config else None
+                            )
                             if functions:
                                 tools = [types.Tool(function_declarations=functions)]
                                 logger.debug(f"🔧 {len(functions)} function declarations added to LLM")
