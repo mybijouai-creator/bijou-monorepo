@@ -1023,16 +1023,44 @@ class FunctionCaller:
         elif function_name == "search_knowledge":
             # 2026-08-22 FIX: this used to return a fake positive-looking
             # result ("Search functionality coming soon" dressed up as a
-            # real search hit), which an LLM could relay to a customer as
-            # if it were real content. Report it as unavailable instead —
-            # not implemented against any of the three knowledge tables the
-            # rest of the app writes to (knowledge_bases, knowledge_chunks,
-            # knowledge_documents); wiring this up is tracked separately.
-            return {
-                "success": False,
-                "results": [],
-                "message": "Knowledge base search is not yet available for this tool call.",
-            }
+            # real search hit). Now does a real (simple ILIKE, not semantic)
+            # search against knowledge_documents — the table the rest of the
+            # chat pipeline's context-builder actually reads
+            # (KnowledgeUploader.get_combined_knowledge, knowledge_upload.py)
+            # and the wizard now writes to (kb_templates_api.py). Not vector
+            # search — knowledge_chunks/vector_search.py exists for that but
+            # nothing populates it; this is the honest minimum that returns
+            # real content instead of nothing or a fake stub.
+            tenant_id = user_context.get("tenant_id") if user_context else None
+            if not tenant_id or not self.tool_orchestrator or not getattr(self.tool_orchestrator, "supabase_client", None):
+                return {
+                    "success": False,
+                    "results": [],
+                    "message": "Knowledge base search is not available (no tenant context).",
+                }
+            try:
+                query = args["query"]
+                max_results = min(int(args.get("max_results") or 5), 20)
+                rows = (
+                    self.tool_orchestrator.supabase_client.table("knowledge_documents")
+                    .select("filename, content_extracted")
+                    .eq("tenant_id", tenant_id)
+                    .ilike("content_extracted", f"%{query}%")
+                    .limit(max_results)
+                    .execute()
+                )
+                results = [
+                    {"title": r.get("filename") or "Untitled", "content": (r.get("content_extracted") or "")[:2000]}
+                    for r in (rows.data or [])
+                ]
+                return {
+                    "success": True,
+                    "results": results,
+                    "message": f"Found {len(results)} result(s)" if results else "No matching knowledge found",
+                }
+            except Exception as e:
+                logger.error(f"search_knowledge failed: {e}")
+                return {"success": False, "results": [], "error": str(e)}
 
         # Calculator
         elif function_name == "calculate":
