@@ -573,7 +573,7 @@
       function useLang() { return React.useContext(LangCtx); }
       const T = {
         en: {
-          inbox:"Inbox",escalations:"Escalations",updates:"Updates",analytics:"Analytics",
+          inbox:"Inbox",escalations:"Needs You",updates:"Updates",analytics:"Analytics",
           knowledge:"AI Training",media:"Media",leads:"Contacts",calls:"Call Booking",settings:"Settings",help_center:"Help & Support",
           logout:"Logout",all:"All",refresh:"Refresh",save:"Save",cancel:"Cancel",edit:"Edit",
           block:"Block",unblock:"Unblock",search:"Search",loading:"Loading…",
@@ -660,6 +660,8 @@
         // 2026-08-22: for the Integrations nav item — static/integrations.html
         // already exists and works, it just had no link from the dashboard.
         "link-2": '<path d="M15 7h3a5 5 0 0 1 5 5 5 5 0 0 1-5 5h-3m-6 0H6a5 5 0 0 1-5-5 5 5 0 0 1 5-5h3"/><line x1="8" y1="12" x2="16" y2="12"/>',
+        // 2026-08-22: for the Getting Started checklist's completed-step marker.
+        check: '<polyline points="20 6 9 17 4 12"/>',
       };
       function Icon({ name, size = 18, className = "", title, style }) {
         return (
@@ -6558,6 +6560,11 @@
         const [esc, setEsc] = useState([]);
         const [wa, setWa] = useState(null);
         const [loading, setLoading] = useState(true);
+        // 2026-08-22: Getting Started checklist dismiss state — declared here
+        // (before the `if (loading) return` below) per React's rules of hooks.
+        const [dismissedGettingStarted, setDismissedGettingStarted] = useState(
+          () => localStorage.getItem("gettingStartedDismissed") === "true",
+        );
 
         useEffect(() => {
           Promise.all([
@@ -6628,6 +6635,66 @@
                 </button>
               )}
             </div>
+
+            {/* 2026-08-22 UX AUDIT: a brand-new client landed here with four
+                zeroed-out stat cards and no indication of what to do first —
+                the product promises "set up in 5 minutes" but the first
+                screen didn't guide anyone. This checklist gives the three
+                setup steps in order, using state already fetched on this
+                page (no new API calls). Dismissible once all steps are done,
+                remembered via localStorage like the PWA-install banner does. */}
+            {!(onDuty && conv > 0) && !dismissedGettingStarted && (
+              <div
+                className="rounded-2xl p-5"
+                style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-semibold" style={{ color: "var(--text-hi)" }}>
+                    Getting started
+                  </span>
+                  <button
+                    onClick={() => {
+                      localStorage.setItem("gettingStartedDismissed", "true");
+                      setDismissedGettingStarted(true);
+                    }}
+                    className="text-xs"
+                    style={{ color: "var(--text-mid)" }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {[
+                    { done: onDuty, label: "Connect WhatsApp", to: "settings" },
+                    { done: false, label: "Add your business info so your AI knows what to say", to: "ai_setup" },
+                    { done: conv > 0, label: "Send a test message", to: "test" },
+                  ].map((step, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => go && go(step.to)}
+                      className="w-full flex items-center gap-3 text-left px-3 py-2 rounded-lg transition-colors hover:bg-white hover:bg-opacity-5"
+                    >
+                      <span
+                        className="flex-shrink-0 rounded-full flex items-center justify-center"
+                        style={{
+                          width: 20, height: 20,
+                          background: step.done ? "var(--accent)" : "transparent",
+                          border: step.done ? "none" : "1px solid var(--border)",
+                        }}
+                      >
+                        {step.done && <Icon name="check" size={12} style={{ color: "#04121a" }} />}
+                      </span>
+                      <span
+                        className="text-sm"
+                        style={{ color: step.done ? "var(--text-mid)" : "var(--text-hi)", textDecoration: step.done ? "line-through" : "none" }}
+                      >
+                        {step.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Today's tally */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -6780,27 +6847,37 @@
 
         // Dynamic NAV labels based on lang
         const tl = k => T[lang][k] ?? T.en[k] ?? k;
+        // 2026-08-22 UX AUDIT (docs/superpowers/specs/2026-08-22-dashboard-ux-audit.md):
+        // 13 flat nav items with no grouping made the sidebar intimidating for
+        // the actual audience (a non-technical SME owner). Added `group` so the
+        // render loop below can insert section headers — same items, same ids,
+        // same routes, just organized by "how often you'd touch this." Also
+        // renamed two labels that are internal-jargon ("Escalations", "AI Setup")
+        // to plain language; these are hardcoded English display strings only
+        // (like "Test Bijou"/"Outreach" already were) — the underlying
+        // escalations table/API/tl() keys are untouched.
         const NAV = [
-          { id: "home", label: "Home", icon: "home" },
-          { id: "inbox", label: tl("inbox"), icon: "inbox" },
-          { id: "escalations", label: tl("escalations"), icon: "alert-circle" },
-          { id: "updates", label: tl("updates"), icon: "activity" },
-          { id: "analytics", label: tl("analytics"), icon: "bar-chart-2" },
-          { id: "knowledge", label: tl("knowledge"), icon: "book-open" },
-          { id: "test", label: "Test Bijou", icon: "bot" },
-          { id: "media", label: tl("media"), icon: "image" },
-          { id: "leads", label: tl("leads"), icon: "users" },
-          { id: "calls", label: tl("calls"), icon: "phone" },
-          { id: "outreach", label: "Outreach", icon: "send", href: "/outreach" },
-          { id: "ai_setup", label: "AI Setup", icon: "zap", href: "/kb-wizard" },
+          { id: "home", label: "Home", icon: "home", group: "today" },
+          { id: "inbox", label: tl("inbox"), icon: "inbox", group: "today" },
+          { id: "escalations", label: "Needs You", icon: "alert-circle", group: "today" },
+          { id: "leads", label: tl("leads"), icon: "users", group: "grow" },
+          { id: "outreach", label: "Outreach", icon: "send", href: "/outreach", group: "grow" },
+          { id: "calls", label: tl("calls"), icon: "phone", group: "grow" },
+          { id: "analytics", label: tl("analytics"), icon: "bar-chart-2", group: "grow" },
+          { id: "ai_setup", label: "Teach My AI", icon: "zap", href: "/kb-wizard", group: "setup" },
+          { id: "knowledge", label: tl("knowledge"), icon: "book-open", group: "setup" },
           // 2026-08-22 FIX: /integrations (static/integrations.html, backed
           // by src/connectors/oauth_api.py) already existed and worked but
           // wasn't linked from anywhere in the dashboard — a new client had
           // no way to discover it short of typing the URL directly.
-          { id: "integrations", label: "Integrations", icon: "link-2", href: "/integrations" },
-          { id: "settings", label: tl("settings"), icon: "settings" },
-          { id: "help", label: tl("help_center"), icon: "life-buoy", href: "/help" },
+          { id: "integrations", label: "Connect Your Tools", icon: "link-2", href: "/integrations", group: "setup" },
+          { id: "test", label: "Test Bijou", icon: "bot", group: "setup" },
+          { id: "media", label: tl("media"), icon: "image", group: "account" },
+          { id: "settings", label: tl("settings"), icon: "settings", group: "account" },
+          { id: "help", label: tl("help_center"), icon: "life-buoy", href: "/help", group: "account" },
+          { id: "updates", label: tl("updates"), icon: "activity", group: "account" },
         ];
+        const NAV_GROUP_LABELS = { today: "Today", grow: "Grow", setup: "Set Up Your AI", account: "Account" };
 
         useEffect(() => {
           api("/api/dashboard/whatsapp/status")
@@ -7006,8 +7083,20 @@
 
                 {/* Nav items */}
                 <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
-                  {NAV.map((n) => (
-                    <div key={n.id} className="nav-tooltip-wrap">
+                  {NAV.map((n, i) => (
+                    <React.Fragment key={n.id}>
+                      {/* Group header — only when this item starts a new group,
+                          and only in expanded (non-icon-only) mode; there's no
+                          room for a text header in the collapsed rail. */}
+                      {!isIconOnly && n.group && n.group !== NAV[i - 1]?.group && (
+                        <div
+                          className="px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider"
+                          style={{ color: "#5b6b68" }}
+                        >
+                          {NAV_GROUP_LABELS[n.group] || n.group}
+                        </div>
+                      )}
+                    <div className="nav-tooltip-wrap">
                       {n.href ? (
                         <a
                           href={n.href}
@@ -7049,6 +7138,7 @@
                         <span className="nav-tooltip">{n.label}</span>
                       )}
                     </div>
+                    </React.Fragment>
                   ))}
                 </nav>
 
