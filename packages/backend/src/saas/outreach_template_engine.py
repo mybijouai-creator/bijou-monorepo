@@ -621,19 +621,55 @@ OUTPUT: Return ONLY the message text. No labels. No quotes. No explanation."""
         Call Gemini with the built context. Returns generated message string.
         Falls back to a simple personalised template on any Gemini failure.
         """
+        prompt = self.build_generation_context(contact, step, campaign_config)
         try:
             model = self._get_model()
-            prompt = self.build_generation_context(contact, step, campaign_config)
             response = await model.generate_content_async(prompt)
             message = response.text.strip().strip('"').strip("'")
             return message
         except Exception as exc:
             logger.error(f"Gemini generation failed for {contact.get('phone')}: {exc}")
+            # 2026-08-22 FIX: this had no fallback besides a single generic
+            # canned line — and with the project's Gemini key currently
+            # suspended (see bijou.py's "PRIMARY" routing comment for the
+            # main chat pipeline, same root cause here), EVERY outreach
+            # message was silently degrading to that one line per industry,
+            # with zero personalization and no warning to the tenant that
+            # the advertised "AI-personalized outreach" wasn't happening.
+            # Try MiniMax (already the primary provider elsewhere in this
+            # app) before giving up on personalization entirely.
+            minimax_message = await self._try_minimax(prompt)
+            if minimax_message:
+                return minimax_message
             name = (contact.get("contact_name") or "there").split()[0]
             area = contact.get("area") or ""
             pack = BUILT_IN_INDUSTRY_PACKS.get(contact.get("industry_type") or "custom", {})
             hook = pack.get("hook_question") or "Quick question about your WhatsApp setup"
             return f"Hi {name}! {hook} 😊"
+
+    async def _try_minimax(self, prompt: str) -> Optional[str]:
+        """MiniMax fallback for generate_message() when Gemini is unavailable."""
+        mm_key = os.getenv("MINIMAX_API_KEY")
+        if not mm_key:
+            return None
+        try:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(
+                base_url=os.getenv("MINIMAX_API_ENDPOINT") or "https://api.minimax.io/v1",
+                api_key=mm_key,
+            )
+            mm_model = os.getenv("MINIMAX_MODELS", "MiniMax-M3").split(",")[0].strip()
+            resp = await client.chat.completions.create(
+                model=mm_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=300,
+            )
+            content = (resp.choices[0].message.content or "").strip().strip('"').strip("'")
+            return content or None
+        except Exception as exc:
+            logger.error(f"MiniMax fallback generation failed: {exc}")
+            return None
 
     # ── Reply Scoring ───────────────────────────────────────────────────────
 
