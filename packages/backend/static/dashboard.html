@@ -6891,7 +6891,7 @@
           { id: "outreach", label: "Outreach", icon: "send", href: "/outreach", group: "grow" },
           { id: "calls", label: tl("calls"), icon: "phone", group: "grow" },
           { id: "analytics", label: tl("analytics"), icon: "bar-chart-2", group: "grow" },
-          { id: "ai_setup", label: "Teach My AI", icon: "zap", href: "/kb-wizard", group: "setup" },
+          { id: "ai_setup", label: "Teach My AI", icon: "zap", group: "setup" },
           { id: "knowledge", label: tl("knowledge"), icon: "book-open", group: "setup" },
           // 2026-08-22 FIX: /integrations (static/integrations.html, backed
           // by src/connectors/oauth_api.py) already existed and worked but
@@ -6957,6 +6957,247 @@
           }
         };
 
+        // 2026-08-23: native port of static/kb-wizard.html (was a full-page
+        // navigation, breaking the SPA feel — see the UX audit doc). Calls
+        // the same /api/kb-templates/* endpoints kb-wizard.html already used;
+        // no backend changes. kb-wizard.html itself is left in place.
+        function AiSetupModule() {
+          const INDUSTRY_META = {
+            property: { emoji: "🏠", name: "Property Agent", desc: "Residential sales, rental agents, property negotiators.", tag: "Ready-made template" },
+            fnb: { emoji: "🍜", name: "Food & Beverage", desc: "Restaurants, cafes, cloud kitchens.", tag: "Ready-made template" },
+            dental: { emoji: "🦷", name: "Dental / Clinic", desc: "Coming soon — dental, aesthetic, and general healthcare.", tag: "Coming soon" },
+            retail: { emoji: "🛒", name: "Retail / Other", desc: "Coming soon — retail and other business types.", tag: "Coming soon" },
+          };
+
+          const [step, setStep] = useState("industry"); // industry -> form -> success
+          const [available, setAvailable] = useState(new Set());
+          const [selectedVertical, setSelectedVertical] = useState(null);
+          const [template, setTemplate] = useState(null);
+          const [filledVars, setFilledVars] = useState({});
+          const [previewTab, setPreviewTab] = useState("greeting");
+          const [previewData, setPreviewData] = useState({});
+          const [applying, setApplying] = useState(false);
+          const [error, setError] = useState("");
+          const [successInfo, setSuccessInfo] = useState(null);
+          const previewDebounce = useRef(null);
+
+          useEffect(() => {
+            api("/api/kb-templates/industries")
+              .then((data) => setAvailable(new Set((data.industries || []).map((i) => i.vertical))))
+              .catch(() => setAvailable(new Set(["property", "fnb"]))); // same fallback kb-wizard.html used
+          }, []);
+
+          async function startSetup(vertical) {
+            setSelectedVertical(vertical);
+            try {
+              const data = await api(`/api/kb-templates/${vertical}`);
+              setTemplate(data.template);
+              setFilledVars(data.saved_progress?.filled_variables ? { ...data.saved_progress.filled_variables } : {});
+              setStep("form");
+            } catch (e) {
+              showToast("Failed to load template: " + e.message);
+            }
+          }
+
+          function onFieldChange(key, value) {
+            setFilledVars((prev) => {
+              const next = { ...prev, [key]: value };
+              if (previewDebounce.current) clearTimeout(previewDebounce.current);
+              previewDebounce.current = setTimeout(() => requestPreview(next), 600);
+              return next;
+            });
+          }
+
+          async function requestPreview(vars) {
+            if (!selectedVertical) return;
+            try {
+              const data = await api(`/api/kb-templates/${selectedVertical}/preview`, {
+                method: "POST",
+                body: JSON.stringify({ filled_variables: vars }),
+              });
+              setPreviewData(data.rendered || {});
+            } catch (_e) {}
+          }
+
+          const requiredKeys = (template?.variables || []).filter((v) => v.required).map((v) => v.key);
+          const optionalKeys = (template?.variables || []).filter((v) => !v.required).map((v) => v.key);
+          const reqDone = requiredKeys.filter((k) => (filledVars[k] || "").trim()).length;
+          const optDone = optionalKeys.filter((k) => (filledVars[k] || "").trim()).length;
+          let completionPct = requiredKeys.length ? Math.round((reqDone / requiredKeys.length) * 80) : 0;
+          if (optionalKeys.length) completionPct += Math.round((optDone / optionalKeys.length) * 20);
+          completionPct = Math.min(completionPct, 100);
+          const missingLabels = requiredKeys
+            .filter((k) => !(filledVars[k] || "").trim())
+            .map((k) => template.variables.find((v) => v.key === k)?.label || k);
+
+          async function applyTemplate() {
+            if (missingLabels.length) {
+              setError("Please complete required fields: " + missingLabels.join(", "));
+              return;
+            }
+            setApplying(true);
+            setError("");
+            try {
+              const data = await api(`/api/kb-templates/${selectedVertical}/apply`, {
+                method: "POST",
+                body: JSON.stringify({ filled_variables: filledVars }),
+              });
+              setSuccessInfo(data);
+              setStep("success");
+            } catch (e) {
+              setError(e.message);
+            }
+            setApplying(false);
+          }
+
+          function resetWizard() {
+            setStep("industry");
+            setSelectedVertical(null);
+            setTemplate(null);
+            setFilledVars({});
+            setPreviewData({});
+            setError("");
+          }
+
+          if (step === "success") {
+            return (
+              <div className="max-w-md mx-auto text-center py-12 px-4">
+                <div className="text-5xl mb-4">🎉</div>
+                <h2 className="text-2xl font-bold mb-2" style={{ color: "var(--premium)" }}>Your AI is Ready!</h2>
+                <p className="text-sm mb-6" style={{ color: "var(--text-mid)" }}>
+                  Knowledge base loaded, FAQ answers configured, escalation rules set.
+                </p>
+                <div className="rounded-xl p-5 mb-6 text-left text-sm space-y-1.5" style={{ background: "var(--surface-1)", border: "1px solid var(--border)", color: "var(--text-mid)" }}>
+                  <div>✅ <strong style={{ color: "var(--accent)" }}>{successInfo?.kb_entries_created ?? 0}</strong> knowledge base entries created</div>
+                  <div>✅ FAQ answers loaded for: {(successInfo?.categories || []).join(", ") || "—"}</div>
+                  <div>✅ Greeting &amp; after-hours messages configured</div>
+                  <div>✅ AI personality set to <strong style={{ color: "var(--premium)" }}>{selectedVertical}</strong> mode</div>
+                </div>
+                <button onClick={resetWizard} className="text-sm underline" style={{ color: "var(--text-mid)" }}>Edit again</button>
+              </div>
+            );
+          }
+
+          if (step === "form" && template) {
+            const groups = {};
+            (template.variables || []).forEach((v) => {
+              const g = v.group || "General";
+              (groups[g] = groups[g] || []).push(v);
+            });
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 max-w-4xl">
+                <div>
+                  {Object.entries(groups).map(([group, fields]) => (
+                    <div key={group} className="mb-4">
+                      <div className="text-xs font-bold uppercase tracking-wider mb-2 pb-1.5 border-b" style={{ color: "var(--premium)", borderColor: "var(--border)" }}>{group}</div>
+                      {fields.map((f) => (
+                        <div key={f.key} className="mb-3">
+                          <label className="text-xs font-semibold uppercase tracking-wide block mb-1.5" style={{ color: "var(--text-mid)" }}>
+                            {f.label}{f.required && <span style={{ color: "var(--accent)" }}> *</span>}
+                          </label>
+                          <input
+                            type="text"
+                            value={filledVars[f.key] || ""}
+                            placeholder={f.example || ""}
+                            onChange={(e) => onFieldChange(f.key, e.target.value)}
+                            className="w-full px-3 py-2.5 rounded-lg text-sm"
+                            style={{ background: "var(--surface-1)", border: "1px solid var(--border)", color: "var(--text-hi)" }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+
+                  <div className="flex items-center gap-3 rounded-lg p-3 mb-4" style={{ background: "#10b98110", border: "1px solid #10b98130" }}>
+                    <span className="text-xl font-bold" style={{ color: "var(--accent)" }}>{completionPct}%</span>
+                    <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
+                      <div className="h-full" style={{ width: completionPct + "%", background: "var(--accent)" }} />
+                    </div>
+                  </div>
+                  {missingLabels.length > 0 && (
+                    <div className="text-xs mb-3" style={{ color: "#f59e0b" }}>⚠️ Still needed: {missingLabels.slice(0, 4).join(", ")}{missingLabels.length > 4 ? "…" : ""}</div>
+                  )}
+                  {error && <div className="text-xs mb-3" style={{ color: "var(--danger)" }}>❌ {error}</div>}
+                  <button
+                    onClick={applyTemplate}
+                    disabled={applying}
+                    className="w-full py-3 rounded-lg font-bold text-sm"
+                    style={{ background: "var(--accent)", color: "#04121a", opacity: applying ? 0.6 : 1 }}
+                  >
+                    {applying ? "Setting up your AI…" : "✅ Apply to My AI — Go Live"}
+                  </button>
+                </div>
+
+                <div className="rounded-xl p-4" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
+                  <h3 className="text-xs font-bold uppercase tracking-wide mb-3" style={{ color: "var(--premium)" }}>Live Preview</h3>
+                  <div className="flex gap-2 mb-3">
+                    {["greeting", "faq", "after"].map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setPreviewTab(t)}
+                        className="px-3 py-1 rounded-md text-xs font-semibold"
+                        style={{ background: previewTab === t ? "var(--accent)" : "rgba(255,255,255,0.06)", color: previewTab === t ? "#04121a" : "var(--text-mid)" }}
+                      >
+                        {t === "after" ? "After Hours" : t.charAt(0).toUpperCase() + t.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-sm" style={{ color: "var(--text-mid)", lineHeight: 1.6 }}>
+                    {previewTab === "greeting" && (previewData.greeting || "Fill in your details to see a live preview →")}
+                    {previewTab === "after" && (previewData.after_hours || "After-hours message will appear here…")}
+                    {previewTab === "faq" && (
+                      (previewData.faq || []).length === 0
+                        ? "FAQ answers will appear here…"
+                        : previewData.faq.slice(0, 8).map((f, i) => (
+                            <div key={i} className="pb-2 mb-2 border-b" style={{ borderColor: "var(--border)" }}>
+                              <div className="font-semibold text-xs mb-1" style={{ color: "var(--premium)" }}>Q: {f.question}</div>
+                              <div>{f.answer}</div>
+                            </div>
+                          ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // step === "industry"
+          return (
+            <div className="max-w-2xl mx-auto py-4">
+              <h1 className="text-xl font-bold mb-1.5" style={{ color: "var(--premium)" }}>Set Up Your AI in Under 7 Minutes</h1>
+              <p className="text-sm mb-6" style={{ color: "var(--text-mid)" }}>
+                Pick your business type and we'll load a ready-made knowledge base, FAQ answers, and WhatsApp scripts.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {Object.entries(INDUSTRY_META).map(([slug, meta]) => {
+                  const isAvail = available.has(slug) || slug === "property" || slug === "fnb";
+                  return (
+                    <button
+                      key={slug}
+                      disabled={!isAvail}
+                      onClick={() => isAvail && startSetup(slug)}
+                      className="text-left rounded-xl p-4 transition-colors"
+                      style={{
+                        background: "var(--surface-1)",
+                        border: `2px solid ${selectedVertical === slug ? "var(--accent)" : "var(--border)"}`,
+                        opacity: isAvail ? 1 : 0.5,
+                        cursor: isAvail ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      <span className="text-2xl block mb-2">{meta.emoji}</span>
+                      <div className="font-bold text-sm mb-1" style={{ color: "var(--premium)" }}>{meta.name}</div>
+                      <div className="text-xs" style={{ color: "var(--text-mid)" }}>{meta.desc}</div>
+                      <span className="inline-block mt-2 px-2 py-0.5 rounded text-[10px] font-semibold" style={{ background: isAvail ? "#10b98120" : "rgba(107,114,128,0.2)", color: isAvail ? "var(--accent)" : "#6b7280" }}>
+                        {meta.tag}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        }
+
         const modules = {
           home: <HomeModule go={setActive} />,
           test: <TestBijouModule />,
@@ -6965,6 +7206,7 @@
           updates: <UpdatesModule />,
           analytics: <AnalyticsModule />,
           knowledge: <KnowledgeModule />,
+          ai_setup: <AiSetupModule />,
           media: <MediaModule />,
           leads: <LeadsModule />,
           calls: <CallsModule />,
