@@ -94,6 +94,7 @@ export type EventName =
   | "waitlist_modal_submitted"
   | "lead_capture_form_submitted"
   | "lead_capture_form_failed"
+  | "lead_capture_duplicate"
   | "lead_captured"
   // Conversion
   | "pricing_plan_clicked"

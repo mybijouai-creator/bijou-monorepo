@@ -26,14 +26,27 @@ project before.
 started because your account is locked due to a billing issue."* Until that is
 resolved, **no backend or bridge change can reach production through CI**.
 
-Before 2026-08-10 the Vercel project was linked to a *different repository*
-(`W3JDev/Bijou-AI---Digital-Employee`), so `packages/landing/` changes never
+Before 2026-08-10 the Vercel project was linked to a *different, pre-monorepo
+repository* (the old standalone "Bijou AI Digital Employee" landing repo), so `packages/landing/` changes never
 reached users despite `README.md` claiming otherwise. It now builds from this
 monorepo. If a landing change doesn't appear live, re-check the project link
 before debugging code.
 
 **Never claim "deployed" or "fixed in prod" from a green build.** Hit the live
 URL. A pushed commit is not a deployed commit.
+
+**Confirmed still locked as of 2026-08-22** (`gh run view <id>` on the latest
+`backend`/`landing` runs still shows the billing annotation). A manual escape
+hatch exists — `flyctl`, authenticated as the project owner's personal Fly.io
+account, can deploy `packages/backend` directly: `flyctl deploy --config
+fly.production.toml --remote-only` from `packages/backend/` — but a Claude
+Code sandbox's own auto-mode permission classifier blocks that command
+outright even after in-chat user approval; it has to be run from a shell the
+classifier doesn't gate. Separately, **some Claude Code sessions run under a
+git credential with no push access to the upstream repo** (`git push`
+403s) — commits can be made locally but may not reach `origin/main` from
+every environment. Verify which identity you're pushing as before assuming
+a commit is safely backed up upstream.
 
 ---
 
@@ -159,7 +172,7 @@ can actually fail a build.
 ## Known-stale docs
 
 - `packages/backend/AI_RULES.md` — targets the pre-monorepo
-  `w3j-bijou-enterprise/` layout and forbids creating `.md` files; contradicts
+  legacy "enterprise" layout (see `legacy/`) and forbids creating `.md` files; contradicts
   `AGENTS.md`. Its `START_HERE.md`, `scripts/check_file_sizes.sh`, and
   `scripts/static_audit.py` do not exist.
 - Root `AGENTS.md` — references `memory/MEMORY.md` and `topics/*.md`; **neither

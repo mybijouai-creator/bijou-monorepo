@@ -372,25 +372,13 @@ async def signup_property_agent(request: SignupRequest):
         supabase.table("tenant_users").insert(user_data).execute()
         logger.info(f"✅ Owner user created for tenant {tenant_id}")
 
-        # Initialize WhatsApp session with bridge
-        try:
-            bridge_url = get_whatsapp_bridge_url()
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                init_response = await client.post(
-                    f"{bridge_url}/api/init", params={"tenant_id": tenant_id},
-                    headers=get_bridge_auth_headers()
-                )
-
-                if init_response.status_code == 200:
-                    logger.info(f"✅ WhatsApp session initialized for {tenant_id}")
-                    # Status remains 'active' - no need to update
-                else:
-                    logger.error(f"❌ Bridge init failed: {init_response.text}")
-                    # Continue anyway - user can retry
-
-        except Exception as bridge_error:
-            logger.error(f"❌ WhatsApp bridge error: {bridge_error}")
-            # Continue - user will see error on onboarding page
+        # 2026-08-22 REMOVED: this used to POST {bridge_url}/api/init on every
+        # signup. That endpoint belongs to the older Go bridge
+        # (packages/bridge/main.go), not the GOWA bridge that's actually
+        # deployed — per faba8f1's own commit message it always 404'd, was
+        # caught and logged, and did nothing. Pure noise/latency on every
+        # signup. The actual device provisioning happens on demand in
+        # get_qr_code() (see the DEVICE_NOT_FOUND branch below).
 
         # Build onboarding URL
         public_url = get_public_url()

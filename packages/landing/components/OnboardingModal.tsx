@@ -85,10 +85,20 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   };
 
   const createErrorState = (apiError: any): ErrorState => {
-    const errorMessage = apiError.detail || apiError.message || "Unknown error";
+    // 2026-08-22 FIX: api/leads.js and api/demo.js return {error, message,
+    // code}, never {detail, message: "...already registered..."} — so
+    // errorMessage below was always "Unknown error" or a generic sentence,
+    // and EVERY branch past this point (duplicate/validation/server/network)
+    // was unreachable dead code; every real failure fell through to the
+    // generic "Something Unexpected Happened" fallback regardless of cause.
+    // `code` is exact and always present — check it first.
+    const errorMessage: string =
+      apiError.detail || apiError.error || apiError.message || "Unknown error";
+    const code: string | undefined = apiError.code;
 
     // Handle duplicate email scenario
     if (
+      code === "DUPLICATE_EMAIL" ||
       errorMessage.includes("already registered") ||
       errorMessage.includes("duplicate")
     ) {
@@ -110,7 +120,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     }
 
     // Handle validation errors
-    if (errorMessage.includes("invalid") || errorMessage.includes("required")) {
+    if (
+      code === "MISSING_EMAIL" ||
+      code === "INVALID_EMAIL" ||
+      code === "MISSING_NAME" ||
+      code === "MISSING_DEMO_TIME" ||
+      errorMessage.includes("invalid") ||
+      errorMessage.includes("required")
+    ) {
       return {
         type: "validation",
         title: "Form Incomplete",
@@ -125,7 +142,12 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
     }
 
     // Handle server errors
-    if (errorMessage.includes("server") || errorMessage.includes("500")) {
+    if (
+      code === "INTERNAL_ERROR" ||
+      code === "RATE_LIMITED" ||
+      errorMessage.includes("server") ||
+      errorMessage.includes("500")
+    ) {
       return {
         type: "server",
         title: "Server Hiccup",
@@ -312,7 +334,12 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           body: JSON.stringify({
             ...demoPayload,
             name: demoPayload.business_name,
-            source: "website",
+            // 2026-08-22 FIX: was hardcoded "website", so every demo booking
+            // (App.tsx opens this modal with source="demo_chat") was
+            // misattributed to "website" in Supabase/PostHog, breaking
+            // funnel analytics for that CTA. Mirror the signup/waitlist
+            // branch below, which already does this correctly.
+            source: source || "website",
           }),
         });
 
@@ -323,6 +350,18 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           trackPostHog("lead_capture_form_failed", { source, mode, status: response.status });
           const errorState = createErrorState(result);
           setErrorState(errorState);
+          setStatus("error");
+          return;
+        }
+
+        // 2026-08-22 FIX: response.ok is true even for a duplicate email
+        // (api/leads.js still saves nothing new but returns 200) — check the
+        // isNewLead signal so a returning prospect sees the dedicated
+        // "Already Part of the Family" UI instead of the generic success
+        // screen implying a fresh signup just happened.
+        if (result.isNewLead === false) {
+          trackPostHog("lead_capture_duplicate", { source, mode });
+          setErrorState(createErrorState(result));
           setStatus("error");
           return;
         }
@@ -393,6 +432,15 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           trackPostHog("lead_capture_form_failed", { source, mode, status: response.status });
           const errorState = createErrorState(result);
           setErrorState(errorState);
+          setStatus("error");
+          return;
+        }
+
+        // 2026-08-22 FIX: see identical duplicate-check comment in the demo
+        // branch above — same signal, same reason.
+        if (result.isNewLead === false) {
+          trackPostHog("lead_capture_duplicate", { source, mode });
+          setErrorState(createErrorState(result));
           setStatus("error");
           return;
         }
@@ -610,7 +658,23 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                     )}
                     {mode === "signup" && (
                       <a
-                        href="https://app.mybijou.xyz/signup"
+                        // 2026-08-22 FIX: this used to be a bare link, so the
+                        // business name/email/phone/industry the prospect
+                        // just typed here were thrown away and they had to
+                        // retype them on the next form — the modal promises
+                        // "Set up in 5 minutes" but delivered a second,
+                        // unrelated form. Pass them through as query params;
+                        // signup.html reads and prefills the matching fields.
+                        href={`https://app.mybijou.xyz/signup?${new URLSearchParams(
+                          {
+                            business_name: formData.business_name,
+                            email: formData.email,
+                            ...(formData.phone ? { phone: formData.phone } : {}),
+                            ...(formData.industry
+                              ? { industry: formData.industry }
+                              : {}),
+                          },
+                        ).toString()}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-dark-900 font-bold text-sm rounded-xl transition-all"

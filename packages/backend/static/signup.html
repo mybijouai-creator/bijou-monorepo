@@ -516,6 +516,29 @@
     </div>
 
     <script>
+      // 2026-08-22 FIX: prefill from the landing page's lead-capture modal,
+      // which now passes business_name/email/phone/industry as query params
+      // instead of discarding them (see OnboardingModal.tsx). Industry uses
+      // a different vocabulary on each side (landing has ~8 options; this
+      // page's industry-grid has 4) — map the overlapping ones, leave the
+      // rest for the user to pick manually.
+      (function prefillFromLanding() {
+        const params = new URLSearchParams(window.location.search);
+        const businessName = params.get("business_name");
+        const email = params.get("email");
+        const phone = params.get("phone");
+        const industry = params.get("industry");
+        if (businessName) document.getElementById("businessName").value = businessName;
+        if (email) document.getElementById("email").value = email;
+        if (phone) document.getElementById("phone").value = phone;
+        const industryMap = { real_estate: "property", healthcare: "dental", fnb: "fnb", retail: "retail" };
+        const mapped = industry && industryMap[industry];
+        if (mapped) {
+          const card = document.querySelector(`.industry-card[data-value="${mapped}"]`);
+          if (card) card.click();
+        }
+      })();
+
       // ── Industry card picker ──────────────────────────────────────────────────
       let selectedVertical = "";
       document.getElementById("industryGrid").addEventListener("click", (e) => {

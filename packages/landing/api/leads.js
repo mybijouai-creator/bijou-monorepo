@@ -408,11 +408,22 @@ export default async function handler(req, res) {
     // `lead_id` is real and the funnel reads correctly).
     await emitLeadEvents({ req, leadData, leadId, supabaseError });
 
+    // 2026-08-22 FIX: this used to hardcode isNewLead: true always, so a
+    // returning prospect whose email already exists (supabaseError ===
+    // "duplicate") got the identical generic success response as a brand
+    // new lead — the frontend's dedicated "Already Part of the Family"
+    // duplicate UI (OnboardingModal.tsx createErrorState) could never
+    // render because response.ok was always true and no signal said which
+    // case this was. isNewLead now reflects the real outcome.
+    const isDuplicate = supabaseError === "duplicate";
     return res.status(200).json({
       success: true,
-      message: "Thank you! Check your email for confirmation.",
+      message: isDuplicate
+        ? "Looks like you're already with us! Check your email, or WhatsApp us if you need help."
+        : "Thank you! Check your email for confirmation.",
       leadId: leadId || "temp-" + Date.now(),
-      isNewLead: true,
+      isNewLead: !isDuplicate,
+      code: isDuplicate ? "DUPLICATE_EMAIL" : undefined,
     });
   } catch (error) {
     console.error("❌ Lead capture error:", error);
