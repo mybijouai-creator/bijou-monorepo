@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 import logging
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -460,6 +461,36 @@ async def apply_template(
         # --- Insert new KB entries
         insert_res = db.table("knowledge_bases").insert(kb_entries).execute()
         kb_ids = [row["id"] for row in (insert_res.data or [])]
+
+        # 2026-08-22 FIX: knowledge_bases is never read by the live chat
+        # pipeline — Bijou._generate_response() builds knowledge_context via
+        # KnowledgeUploader.get_combined_knowledge(), which only queries
+        # knowledge_documents (see knowledge_upload.py:433-438). Every prior
+        # "Apply to My AI — Go Live" completed with a success screen but
+        # ZERO change to what the AI actually says to a customer. Mirror the
+        # same entries into knowledge_documents (the schema kb_import_api.py
+        # already uses) so the wizard's content is actually usable in chat.
+        # Wipe-then-reinsert on uploaded_by="kb_template" for idempotent
+        # reapply, matching the knowledge_bases wipe above.
+        db.table("knowledge_documents").delete().eq("tenant_id", tenant_id).eq(
+            "uploaded_by", "kb_template"
+        ).execute()
+        if kb_entries:
+            now_iso = datetime.utcnow().isoformat()
+            doc_rows = [
+                {
+                    "tenant_id": tenant_id,
+                    "filename": entry["title"],
+                    "file_type": "text/plain",
+                    "file_size_kb": round(len(entry["content"].encode()) / 1024, 2),
+                    "content_extracted": entry["content"],
+                    "uploaded_by": "kb_template",
+                    "uploaded_at": now_iso,
+                    "metadata": {"source": "kb_template", "vertical": vertical, "category": entry.get("category")},
+                }
+                for entry in kb_entries
+            ]
+            db.table("knowledge_documents").insert(doc_rows).execute()
 
         # --- Update client_configs.system_prompt_vars
         cfg_res = (
