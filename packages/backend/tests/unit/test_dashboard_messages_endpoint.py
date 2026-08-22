@@ -152,6 +152,52 @@ class TestMessagesEndpoint:
         assert result[0]["content"] == "Hello"
         assert result[0]["role"] == "user"
 
+    async def test_media_fields_pass_through_when_present(self):
+        """
+        2026-08-22/23: messages table gained media_url/media_type columns
+        (add_message_media_columns.sql) so a human agent can see the
+        customer's actual attachment, not just the AI's text summary of it.
+        Confirms the endpoint's select+response-mapping actually surfaces
+        them, and that a text-only row (no media columns in the DB response)
+        still returns cleanly with both fields null.
+        """
+        rows = [
+            {
+                "id": "img1", "role": "user", "content": "📸 Image: a receipt",
+                "created_at": "2026-02-20T10:00:00+00:00",
+                "media_url": "https://bridge.example/media/abc123.jpg",
+                "media_type": "image",
+            },
+            {
+                "id": "txt1", "role": "user", "content": "Hello",
+                "created_at": "2026-02-20T10:00:05+00:00",
+                # No media_url/media_type keys at all — simulates a text-only
+                # row or a pre-migration row read before the columns existed.
+            },
+        ]
+        client_mock, query_mock = _make_supabase_mock(rows)
+
+        with patch.object(_das, "get_supabase", return_value=client_mock):
+            result = await get_messages_for_chat(
+                chat_jid="104600321409056@lid",
+                tenant_id="29d48db4-075f-45ee-8c00-a57f8fd3016a",
+            )
+
+        # The select must actually request the new columns from Supabase —
+        # a passing test that never checks this would miss a regression
+        # where someone reverts the .select() string but leaves the
+        # response-mapping code in place (looks fine, silently returns null
+        # for every row because the columns were never fetched).
+        select_calls = [str(call) for call in query_mock.select.call_args_list]
+        assert any("media_url" in c and "media_type" in c for c in select_calls), (
+            f"Expected media_url/media_type in .select() calls, got: {select_calls}"
+        )
+
+        assert result[0]["media_url"] == "https://bridge.example/media/abc123.jpg"
+        assert result[0]["media_type"] == "image"
+        assert result[1]["media_url"] is None
+        assert result[1]["media_type"] is None
+
 
 # ---------------------------------------------------------------------------
 # TestLeadsEndpoint

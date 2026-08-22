@@ -2559,14 +2559,17 @@ async def get_messages_for_chat(
     chat_jid is URL-encoded in the path (e.g. %40 → @). FastAPI decodes it
     automatically via path parameter extraction, so no manual decoding needed.
 
-    Returns a JSON array of {id, role, content, timestamp} ordered ASC by
-    created_at.  Returns [] on any error so the dashboard never crashes.
+    Returns a JSON array of {id, role, content, timestamp, media_url,
+    media_type} ordered ASC by created_at. media_url/media_type are the
+    customer's raw WhatsApp attachment (see add_message_media_columns.sql,
+    2026-08-23) — null for text-only messages. Returns [] on any error so
+    the dashboard never crashes.
     """
     try:
         supabase = get_supabase()
         response = (
             supabase.table("messages")
-            .select("id, role, content, created_at")
+            .select("id, role, content, created_at, media_url, media_type")
             .eq("tenant_id", tenant_id)
             .eq("chat_jid", chat_jid)
             .order("created_at", desc=False)
@@ -2581,6 +2584,8 @@ async def get_messages_for_chat(
                 "role": row.get("role", "user"),
                 "content": row.get("content", ""),
                 "timestamp": row.get("created_at"),
+                "media_url": row.get("media_url"),
+                "media_type": row.get("media_type"),
             }
             for row in rows
         ]
