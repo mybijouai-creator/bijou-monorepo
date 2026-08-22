@@ -167,8 +167,15 @@ Booked via Bijou AI
                     "error": f"Calendar booking failed: {booking_result.get('error')}"
                 }
 
-            booking_id = booking_result.get("booking", {}).get("id")
-            calendar_link = booking_result.get("booking", {}).get("calendar_link") or f"https://cal.com/{config.get('cal_username')}/reschedule/{booking_id}"
+            # 2026-08-22 FIX: calendar_tool.py's create_event() returns a FLAT
+            # dict ({"success", "booking_id", "event_link", ...}), never a
+            # nested "booking" key — so booking_id was always None and every
+            # confirmation link was literally ".../reschedule/None".
+            booking_id = booking_result.get("booking_id")
+            calendar_link = booking_result.get("event_link") or (
+                f"https://cal.com/{config.get('cal_username')}/reschedule/{booking_id}"
+                if booking_id else None
+            )
 
             logger.info(f"✅ Booking created: ID={booking_id}, Link={calendar_link}")
 

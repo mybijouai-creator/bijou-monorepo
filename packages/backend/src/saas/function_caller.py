@@ -503,11 +503,34 @@ class FunctionCaller:
                     )
                     args = {}
 
-                try:
-                    result = await self._call_function(name, args, user_context)
-                except Exception as tool_err:
-                    logger.error(f"❌ Tool {name} raised: {tool_err}")
-                    result = {"success": False, "error": str(tool_err)}
+                # 2026-08-22 FIX: this loop is the MiniMax/OpenAI-compatible
+                # tool-call path — currently the PRIMARY provider (Gemini is
+                # suspended, see the "PRIMARY" note in bijou.py's model
+                # routing). It called _call_function directly, skipping the
+                # is_destructive_action()/pending_confirmations gate that
+                # _execute_function (the Gemini-native path) already has —
+                # so every send_email/delete_email/create_calendar_event/etc.
+                # tool call went straight through with no confirmation step
+                # on the path actually in use. Mirror the same gate here.
+                if self.enable_confirmations and self.is_destructive_action(name):
+                    confirmation_id = f"{user_context.get('chat_jid', 'unknown')}_{datetime.now().timestamp()}"
+                    self.pending_confirmations[confirmation_id] = {
+                        "function_name": name,
+                        "args": args,
+                        "chat_jid": user_context.get("chat_jid"),
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                    result = {
+                        "status": "pending_confirmation",
+                        "confirmation_id": confirmation_id,
+                        "message": self._get_confirmation_message(name, args),
+                    }
+                else:
+                    try:
+                        result = await self._call_function(name, args, user_context)
+                    except Exception as tool_err:
+                        logger.error(f"❌ Tool {name} raised: {tool_err}")
+                        result = {"success": False, "error": str(tool_err)}
 
                 # OpenAI requires the tool message to echo the tool_call_id
                 # and to have a string content (not a dict).
@@ -872,29 +895,35 @@ class FunctionCaller:
             if not tenant_id:
                 raise ValueError("Tenant ID required for calendar check")
 
-            # Get tenant's calendar config and check availability via Cal.com API
-            config = self.tool_orchestrator.tenant_calendar_service.get_tenant_calendar_config(tenant_id)
-            if not config:
-                return {
-                    "available": False,
-                    "message": "Calendar not configured for this tenant. Please ask the customer to contact the office directly.",
-                    "slots": []
-                }
-
+            # 2026-08-22 FIX: this used to hand-roll a fresh CalendarTool with
+            # only cal_api_key/cal_username (never checking OAuth), and then
+            # treated get_availability()'s return dict ({"success", "slots":
+            # {<date>: [...]}, "busy": [...]}) as if IT were the slots list —
+            # `bool(slots)` was always True and `len(slots)` always counted
+            # the dict's fixed top-level keys, not real slot counts, so the
+            # AI always told customers "Found 3 available slot(s)" regardless
+            # of actual availability. TenantCalendarService.check_availability()
+            # already does this correctly (OAuth-or-API-key, real result) —
+            # delegate to it instead of duplicating (and getting wrong) the
+            # same logic here.
             try:
-                from src.core.tools.calendar_tool import CalendarTool
-                calendar = CalendarTool()
-                calendar.api_key = config.get("cal_api_key")
-                calendar.username = config.get("cal_username")
-                calendar._initialized = True
-
                 date_from = args["date_from"]
                 date_to = args.get("date_to", date_from)
-                slots = calendar.get_availability(date_from=date_from, date_to=date_to)
+                result = self.tool_orchestrator.tenant_calendar_service.check_availability(
+                    tenant_id=tenant_id, date_from=date_from, date_to=date_to
+                )
+                if not result.get("success"):
+                    return {
+                        "available": False,
+                        "error": result.get("error"),
+                        "message": "Could not check calendar availability. Please ask the customer to contact the office directly."
+                    }
+                slots_by_date = result.get("slots") or {}
+                flat_slots = [s for day_slots in slots_by_date.values() for s in (day_slots or [])]
                 return {
-                    "available": bool(slots),
-                    "slots": slots,
-                    "message": f"Found {len(slots) if slots else 0} available slot(s)" if slots else "No available slots for this date"
+                    "available": bool(flat_slots),
+                    "slots": slots_by_date,
+                    "message": f"Found {len(flat_slots)} available slot(s)" if flat_slots else "No available slots for this date"
                 }
             except Exception as e:
                 logger.error(f"Calendar availability check failed: {e}")
