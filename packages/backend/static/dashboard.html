@@ -6968,7 +6968,7 @@
           // by src/connectors/oauth_api.py) already existed and worked but
           // wasn't linked from anywhere in the dashboard — a new client had
           // no way to discover it short of typing the URL directly.
-          { id: "integrations", label: "Connect Your Tools", icon: "link-2", href: "/integrations", group: "setup" },
+          { id: "integrations", label: "Connect Your Tools", icon: "link-2", group: "setup" },
           { id: "test", label: "Test Bijou", icon: "bot", group: "setup" },
           { id: "media", label: tl("media"), icon: "image", group: "account" },
           { id: "settings", label: tl("settings"), icon: "settings", group: "account" },
@@ -7269,6 +7269,120 @@
           );
         }
 
+        // 2026-08-23: native port of static/integrations.html — but rebuilt
+        // against the Nango API (/api/nango/*), not the old dead Composio
+        // scaffold (/connectors/*) integrations.html called. Redirects to
+        // Nango's own hosted Connect UI via connect_link rather than
+        // embedding Nango's frontend JS widget (no CDN script guess needed).
+        // Degrades gracefully if Nango isn't configured yet (502/404) —
+        // that's a real, separate, known gap (no NANGO_SECRET_KEY verified
+        // live yet), not a bug in this tab.
+        function IntegrationsModule() {
+          const CATALOG = [
+            { id: "google-mail", label: "Gmail" },
+            { id: "google-calendar", label: "Google Calendar" },
+            { id: "google-sheet", label: "Google Sheets" },
+          ];
+          const [connections, setConnections] = useState([]);
+          const [loading, setLoading] = useState(true);
+          const [connecting, setConnecting] = useState(null);
+          const [unavailable, setUnavailable] = useState(false);
+
+          const load = useCallback(async () => {
+            setLoading(true);
+            try {
+              const data = await api("/api/nango/connections");
+              setConnections(data.connections || []);
+              setUnavailable(false);
+            } catch (_e) {
+              setUnavailable(true);
+            }
+            setLoading(false);
+          }, []);
+
+          useEffect(() => { load(); }, [load]);
+
+          const connectedIds = new Set(connections.map((c) => c.integration_id));
+
+          async function connect(integrationId) {
+            setConnecting(integrationId);
+            try {
+              const data = await api("/api/nango/session", {
+                method: "POST",
+                body: JSON.stringify({ integration_id: integrationId }),
+              });
+              if (data.connect_link) {
+                window.location.href = data.connect_link;
+              } else {
+                showToast("Could not start the connection.", "error");
+                setConnecting(null);
+              }
+            } catch (e) {
+              showToast("Couldn't start the connection: " + e.message, "error");
+              setConnecting(null);
+            }
+          }
+
+          async function disconnect(integrationId) {
+            try {
+              await api(`/api/nango/connections/${integrationId}`, { method: "DELETE" });
+              showToast("Disconnected", "success");
+              load();
+            } catch (e) {
+              showToast("Failed to disconnect: " + e.message, "error");
+            }
+          }
+
+          if (loading) return <Spinner />;
+
+          return (
+            <div className="max-w-2xl">
+              <h1 className="text-xl font-bold mb-1.5" style={{ color: "var(--premium)" }}>Connect Your Tools</h1>
+              <p className="text-sm mb-6" style={{ color: "var(--text-mid)" }}>
+                Let Bijou act in your tools. Connect an account and Bijou can use it on your behalf.
+              </p>
+              {unavailable && (
+                <div className="text-sm rounded-lg p-3 mb-4" style={{ background: "#f59e0b15", color: "#f59e0b", border: "1px solid #f59e0b30" }}>
+                  Integrations aren't set up yet — check back soon.
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {CATALOG.map((item) => {
+                  const isOn = connectedIds.has(item.id);
+                  return (
+                    <div key={item.id} className="rounded-xl p-4 flex flex-col gap-3" style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}>
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-sm" style={{ color: "var(--text-hi)" }}>{item.label}</span>
+                        <span
+                          className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ background: isOn ? "#10b98120" : "rgba(255,255,255,0.06)", color: isOn ? "var(--accent)" : "var(--text-mid)" }}
+                        >
+                          {isOn ? "Connected" : "Not connected"}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => (isOn ? disconnect(item.id) : connect(item.id))}
+                        disabled={connecting === item.id}
+                        className="text-sm font-semibold py-2 rounded-lg"
+                        style={
+                          isOn
+                            ? { background: "transparent", border: "1px solid var(--danger)", color: "var(--danger)" }
+                            : { background: "var(--accent)", color: "#04121a", opacity: connecting === item.id ? 0.6 : 1 }
+                        }
+                      >
+                        {isOn ? "Disconnect" : connecting === item.id ? "Starting…" : "Connect"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-xs mt-6" style={{ color: "var(--text-mid)" }}>
+                Connections are optional and can be revoked anytime.
+              </p>
+            </div>
+          );
+        }
+
         const modules = {
           home: <HomeModule go={setActive} />,
           test: <TestBijouModule />,
@@ -7278,6 +7392,7 @@
           analytics: <AnalyticsModule />,
           knowledge: <KnowledgeModule />,
           ai_setup: <AiSetupModule />,
+          integrations: <IntegrationsModule />,
           media: <MediaModule />,
           leads: <LeadsModule />,
           calls: <CallsModule />,

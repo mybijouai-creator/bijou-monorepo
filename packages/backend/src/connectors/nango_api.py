@@ -67,7 +67,11 @@ async def create_session(req: SessionRequest, tenant_id: str = Depends(verify_se
     except Exception as e:
         logger.error("Nango create_connect_session failed for tenant=%s: %s", tenant_id, e)
         raise HTTPException(status_code=502, detail="Could not start connection with Nango")
-    return {"session_token": data.get("token")}
+    # 2026-08-23: surface connect_link too — a plain redirect to Nango's
+    # own hosted Connect UI is simpler and more robust for the dashboard
+    # than embedding Nango's frontend JS widget (which needs a CDN script
+    # tag whose exact URL wasn't worth guessing at without live-testing it).
+    return {"session_token": data.get("token"), "connect_link": data.get("connect_link")}
 
 
 @router.post("/connections/confirm")
