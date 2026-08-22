@@ -1509,6 +1509,33 @@
                                 m.role === "user" ? "18px" : "4px",
                             }}
                           >
+                            {/* 2026-08-22/23 FIX: messages table gained media_url/
+                                media_type; before this, a human agent could only read
+                                the AI's text summary of a customer's photo/voice note,
+                                never the actual attachment. */}
+                            {m.media_url && m.media_type === "image" && (
+                              <img
+                                src={m.media_url}
+                                alt="Customer attachment"
+                                style={{ maxWidth: "260px", borderRadius: "10px", marginBottom: "6px", display: "block" }}
+                                loading="lazy"
+                              />
+                            )}
+                            {m.media_url && ["audio", "ptt"].includes(m.media_type) && (
+                              <audio controls src={m.media_url} style={{ maxWidth: "260px", marginBottom: "6px", display: "block" }} />
+                            )}
+                            {m.media_url && !["image", "audio", "ptt"].includes(m.media_type) && (
+                              <a
+                                href={m.media_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1.5 text-xs underline mb-1.5"
+                                style={{ color: "inherit", opacity: 0.85 }}
+                              >
+                                <Icon name="file-text" size={13} />
+                                View attachment
+                              </a>
+                            )}
                             <div
                               style={{
                                 whiteSpace: "pre-wrap",
