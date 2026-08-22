@@ -7172,7 +7172,30 @@ async def webhook_connection_status(request: Request):
                 tenant_id = device_id_raw[len("bijou-"):]
                 logger.info(f"📡 [CONNECTION WEBHOOK] Extracted tenant_id={tenant_id} from device_id={device_id_raw}")
             else:
+                # 2026-08-22 FIX: on-demand-provisioned devices (see
+                # onboarding_api.py) get a bridge-assigned device_id, not the
+                # predictable "bijou-{tenant_id}" format, so the branch above
+                # never fires for them. Look up the real tenant_id from the
+                # whatsapp_devices mapping table instead of treating the raw
+                # bridge device_id as a tenant UUID (which always matched
+                # zero rows and silently no-op'd the whole webhook — the
+                # onboarding page polled "Waiting for scan…" forever even
+                # after a real scan).
                 tenant_id = device_id_raw
+                if bijou_instance and bijou_instance.db_type == "supabase" and bijou_instance.db_conn:
+                    try:
+                        dev_row = (
+                            bijou_instance.db_conn.table("whatsapp_devices")
+                            .select("tenant_id")
+                            .eq("device_id", device_id_raw)
+                            .limit(1)
+                            .execute()
+                        )
+                        if dev_row.data and dev_row.data[0].get("tenant_id"):
+                            tenant_id = dev_row.data[0]["tenant_id"]
+                            logger.info(f"📡 [CONNECTION WEBHOOK] Resolved tenant_id={tenant_id} from whatsapp_devices for device_id={device_id_raw}")
+                    except Exception as _lookup_err:
+                        logger.warning(f"⚠️ [CONNECTION WEBHOOK] whatsapp_devices lookup failed for device_id={device_id_raw}: {_lookup_err}")
 
         logger.info(
             f"📡 [CONNECTION WEBHOOK] tenant={tenant_id}, jid={whatsapp_jid}, status={status}"

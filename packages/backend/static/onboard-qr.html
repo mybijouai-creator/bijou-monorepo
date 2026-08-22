@@ -336,11 +336,21 @@
         };
 
         try {
-          const res = await fetch(`${API_BASE}/api/business/profile`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-          });
+          // 2026-08-22 FIX: /api/business/profile requires verify_session — a
+          // query-string tenant_id+token pair matched against
+          // tenants.signup_token, or a JWT. This page isn't logged in yet at
+          // this step; send the tenant_id (from the status poll) and token
+          // (from the URL) as query params so the legacy-token path resolves.
+          // Without this every submit 400/401'd and the user could never
+          // reach the QR step.
+          const res = await fetch(
+            `${API_BASE}/api/business/profile?tenant_id=${encodeURIComponent(data.tenant_id)}&token=${encodeURIComponent(token)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data),
+            },
+          );
           if (!res.ok) {
             const errBody = await res.json().catch(() => ({}));
             throw new Error(errBody.detail || `HTTP ${res.status}`);

@@ -98,6 +98,18 @@ jobs:
           find . -name '*.cjs' -exec node --check {} +
           echo "PASS: all .cjs valid"
 
+      - name: Static HTML inline-JS syntax check (blocking)
+        # 2026-08-22: login.html had a stray brace that broke its entire
+        # inline <script> parse — invisible here because the step above only
+        # globs *.cjs. A syntax error in these hand-written pages means the
+        # login/signup/dashboard JS silently never runs in the browser while
+        # the API still returns 200. tests/unit/test_static_html_js_syntax.py
+        # extracts every plain-JS <script> block from static/*.html and runs
+        # node --check on it.
+        run: |
+          pip install -r requirements-dev.txt
+          python -m pytest tests/unit/test_static_html_js_syntax.py -q
+
       - name: Node deps (for .cjs scripts that import npm packages)
         run: npm install --no-audit --no-fund --no-save
 
