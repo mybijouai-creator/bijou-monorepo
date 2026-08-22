@@ -42,11 +42,60 @@ account, can deploy `packages/backend` directly: `flyctl deploy --config
 fly.production.toml --remote-only` from `packages/backend/` — but a Claude
 Code sandbox's own auto-mode permission classifier blocks that command
 outright even after in-chat user approval; it has to be run from a shell the
-classifier doesn't gate. Separately, **some Claude Code sessions run under a
-git credential with no push access to the upstream repo** (`git push`
-403s) — commits can be made locally but may not reach `origin/main` from
-every environment. Verify which identity you're pushing as before assuming
-a commit is safely backed up upstream.
+classifier doesn't gate. **Confirmed working 2026-08-22/23**: the project
+owner ran this manual deploy themselves from a normal terminal and it
+succeeded (`registry.fly.io/bijou-production:deployment-...`, machine update
+succeeded) — this is the real, current path to ship backend fixes while CI
+is locked. The same classifier also blocks `flyctl secrets set/unset` — those
+need the owner's terminal too. Separately, **some Claude Code sessions run
+under a git credential with no push access to the upstream repo** (`git push`
+403s, confirmed again 2026-08-23 with 18 unpushed commits sitting local-only)
+— commits can be made locally but may not reach `origin/main` from every
+environment. Verify which identity you're pushing as before assuming a
+commit is safely backed up upstream.
+
+### Recurring bug class: stale Fly secrets overriding the canonical-domain fix
+
+`auth_api.py`/`google_oauth.py` both build user-facing URLs from
+`_public_base_url()`, which correctly prefers `PUBLIC_URL` (`=
+https://app.mybijou.xyz`, confirmed correctly set live) over a hardcoded
+Fly-domain fallback. But **several call sites read a *different*,
+narrower env var first, with no fallback guard**, so a stale leftover value
+from before the domain was finalized silently wins:
+`auth_api.py:848`'s magic-link builder reads `LOGIN_URL` directly;
+`google_oauth.py`'s OAuth config reads `GOOGLE_REDIRECT_URI` directly;
+`pricing_engine.py`/`reporting_engine.py`/`escalation_notifier.py`/
+`stripe_service.py`/`trial_manager.py` all read `APP_URL`/`DASHBOARD_URL`.
+Found 2026-08-23 because all four were still set as live Fly secrets from
+before the `_public_base_url()` fix existed, causing "login redirects to the
+Fly domain, session lost, loops back to login." Fixed by `flyctl secrets
+unset LOGIN_URL APP_URL DASHBOARD_URL GOOGLE_REDIRECT_URI -a
+bijou-production` (safe for the first three — code's own fallback is already
+the correct canonical domain; `GOOGLE_REDIRECT_URI` additionally needs
+`https://app.mybijou.xyz/api/auth/google/callback` registered in Google
+Cloud Console's OAuth client, or Google rejects with `redirect_uri_mismatch`
+instead of looping). **If a similar "wrong domain" symptom recurs, check
+`flyctl secrets list` for other narrow env-var overrides before re-deriving
+the fix from scratch** — this is the second time this exact bug class has
+bitten this project (see `auth_api.py`'s own 2026-08-10 comment about the
+first occurrence).
+
+### Integration platform: Nango, not Composio (decided 2026-08-22)
+
+The `src/connectors/oauth_api.py`/`auth_configs.py`/`static/integrations.html`
+Composio scaffold was never launched (confirmed: `ENABLE_COMPOSIO` never set,
+router never mounted, zero `COMPOSIO_AUTH_ID_*` configured) and Composio's
+real self-hosting story turned out to be weaker than advertised (the
+credential-storage/execution backend is closed-source, self-host images are
+Enterprise-gated). Decision: replaced with **Nango** (open-source, genuinely
+self-hostable, purpose-built for multi-tenant customer-facing OAuth) —
+`src/connectors/nango_client.py` + `src/connectors/nango_api.py` +
+`migrations-py/add_tenant_integrations.sql`, gated behind `NANGO_SECRET_KEY`
+(or `NANGO_API_KEY`) being set. **Not yet verified against the real Nango
+API** — built and unit-tested with mocks only; nobody has hit
+`POST /api/nango/session` through a running app instance yet. The
+dashboard's Integrations tab still needs the frontend Connect UI wired up to
+call it (not done as of 2026-08-23).
 
 ---
 
