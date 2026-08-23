@@ -1,0 +1,105 @@
+# fly.toml app configuration file generated for bijou-production on 2026-08-22T18:26:48+08:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'bijou-production'
+primary_region = 'sin'
+
+[deploy]
+  strategy = 'immediate'
+
+[env]
+  AGENT_NAME = 'Bijou'
+  AI_MODEL = 'gemini-2.5-flash'
+  AUDIO_MAX_SIZE_MB = '25'
+  AUDIO_SUPPORTED_FORMATS = 'ogg,mp3,wav,m4a,opus'
+  AUTO_RECOVERY_ENABLED = 'true'
+  BIJOU_DB_PATH = '/data/bijou.db'
+  CIRCUIT_BREAKER_ENABLED = 'true'
+  COST_OPTIMIZATION_ENABLED = 'true'
+  CULTURAL_CONTEXT_ENABLED = 'true'
+  DASHBOARD_MODE = 'strict'
+  DB_TYPE = 'supabase'
+  DEBUG = 'false'
+  DEFAULT_TENANT_ID = '607690ec-4ff7-4ef4-b98e-bfb00442fe95'
+  DISABLE_BUSINESS_HOURS = 'true'
+  ENABLE_AI_HANDOVER_DETECTION = 'true'
+  ENABLE_AUDIO_TOOL = 'true'
+  ENABLE_CALENDAR_TOOL = 'true'
+  ENABLE_FUNCTION_CALLING = 'true'
+  ENABLE_GMAIL_TOOL = 'true'
+  ENABLE_IMAGE_TOOL = 'true'
+  ENABLE_PROACTIVE_MESSAGING = 'true'
+  ENABLE_WHATSAPP_EVENT_TOOL = 'true'
+  ENVIRONMENT = 'production'
+  ESCALATION_ENABLED = 'true'
+  GOOGLE_CREDENTIALS_PATH = '/app/credentials/google_service_account.json'
+  GOOGLE_PROJECT_ID = 'gen-lang-client-0423187661'
+  GOOGLE_SHEETS_ENABLED = 'false'
+  HEALTH_CHECK_ENABLED = 'true'
+  HUMANIZER_ENABLED = 'true'
+  IMAGE_MAX_SIZE_MB = '10'
+  IMAGE_SUPPORTED_FORMATS = 'jpg,jpeg,png,gif,webp,bmp'
+  LOGS_PATH = '/data/logs'
+  LOG_FILE = '/data/logs/bijou.log'
+  LOG_LEVEL = 'INFO'
+  MANGLISH_DETECTION = 'true'
+  MAX_CONCURRENT_MESSAGES = '10'
+  MAX_CONTEXT_MESSAGES = '10'
+  MAX_MESSAGES_PER_POLL = '50'
+  MAX_TOKENS = '2048'
+  MEDIA_CLEANUP_AGE_HOURS = '1'
+  MEDIA_DOWNLOAD_TIMEOUT = '30'
+  MEDIA_MAX_SIZE_MB = '10'
+  MEDIA_TEMP_DIR = '/tmp/bijou_media'
+  MEMORY_RETENTION_DAYS = '30'
+  METRICS_ENABLED = 'true'
+  ML_JUDGE_ENABLED = 'true'
+  MULTI_TENANT_ENABLED = 'true'
+  PII_MASKING_ENABLED = 'true'
+  POLLING_INTERVAL = '2'
+  PORT = '8080'
+  PRIMARY_LANGUAGES = 'ms,zh,ta,en,en-my'
+  PUBLIC_URL = 'https://app.mybijou.xyz'
+  RATE_LIMIT_MESSAGES = '1000'
+  RATE_LIMIT_WINDOW = '3600'
+  REQUIRE_DASHBOARD_TOKEN = 'true'
+  STRIPE_API_VERSION = '2023-10-16'
+  TENANT_DATA_PATH = '/data/tenants'
+  TENANT_ISOLATION = 'true'
+  TRACE_ENABLED = 'false'
+  TTS_MODEL = 'tts-1'
+  TTS_VOICE = 'alloy'
+  VERTEX_AI_LOCATION = 'us-central1'
+  WEBHOOK_MAX_MESSAGE_AGE_MINUTES = '15'
+  WEBHOOK_MODE = 'true'
+  WHISPER_MODEL = 'whisper-1'
+  WORKER_PROCESSES = '2'
+
+[[mounts]]
+  source = 'production_data_volume_v2'
+  destination = '/data'
+  initial_size = '2gb'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [[http_service.checks]]
+    interval = '15s'
+    timeout = '5s'
+    grace_period = '1m30s'
+    method = 'GET'
+    path = '/health'
+    protocol = 'http'
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 2
+  memory_mb = 1024
