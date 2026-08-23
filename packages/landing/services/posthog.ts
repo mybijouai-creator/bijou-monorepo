@@ -111,7 +111,10 @@ export type EventName =
   | "spot_count_fetched"
   // Errors
   | "api_error"
-  | "chat_error";
+  | "chat_error"
+  // 2026-08-23: Changelog (issue #8)
+  | "changelog_github_click"
+  | "changelog_github_footer_click";
 
 export function track(event: EventName, properties?: Record<string, unknown>): void {
   if (!initialized || !PROJECT_KEY) return;

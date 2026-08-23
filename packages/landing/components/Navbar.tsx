@@ -78,6 +78,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               Live Demo
             </a>
+            <a
+              href="#changelog"
+              className="text-sm font-medium text-gray-300 hover:text-gold-400 transition-colors flex items-center gap-1.5"
+            >
+              What's new
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            </a>
             <LanguageSwitcher />
             <button
               onClick={() => { trackPostHog("nav_signup_clicked", { cta: "navbar_early_access" }); onOpenModal?.(); }}

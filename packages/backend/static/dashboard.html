@@ -6657,6 +6657,7 @@
         const [stats, setStats] = useState(null);
         const [esc, setEsc] = useState([]);
         const [wa, setWa] = useState(null);
+        const [activity, setActivity] = useState([]);
         const [loading, setLoading] = useState(true);
         // 2026-08-22: Getting Started checklist dismiss state — declared here
         // (before the `if (loading) return` below) per React's rules of hooks.
@@ -6669,10 +6670,13 @@
             api("/api/dashboard/stats").catch(() => null),
             api("/api/dashboard/escalations").catch(() => []),
             api("/api/dashboard/whatsapp/status").catch(() => null),
-          ]).then(([s, e, w]) => {
+            api("/api/dashboard/activity?since_hours=24&limit=10").catch(() => []),
+          ]).then(([s, e, w, a]) => {
             setStats(s);
             setEsc(Array.isArray(e) ? e : e?.escalations || []);
             setWa(w);
+            // 2026-08-23: First agentic-GenUI primitive — live activity feed.
+            setActivity(Array.isArray(a) ? a : []);
             setLoading(false);
           });
         }, []);
@@ -6801,6 +6805,68 @@
               <StatCard label="Messages today" value={stats?.messages_today ?? 0} icon="send" />
               <StatCard label="Leads today" value={stats?.leads_generated_today ?? 0} icon="users" />
             </div>
+
+            {/* 2026-08-23: First agentic-GenUI primitive — "What your AI just
+                did" feed. Synthesized from /api/dashboard/activity (conversations
+                + escalations tables). Empty state is graceful: empty list +
+                "Your AI hasn't done anything yet" copy. Tap an item to jump
+                to the conversation in the inbox. */}
+            {activity && activity.length > 0 && (
+              <div
+                className="rounded-2xl p-4"
+                style={{ background: "var(--surface-1)", border: "1px solid var(--border)" }}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2 font-semibold" style={{ color: "var(--text-hi)" }}>
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ background: "var(--accent-hi)", boxShadow: "0 0 8px var(--accent-hi)" }}
+                    />
+                    What your AI just did
+                  </div>
+                  <span className="text-xs" style={{ color: "var(--text-mid)" }}>last 24h</span>
+                </div>
+                <div className="space-y-1.5">
+                  {activity.slice(0, 8).map((item, i) => {
+                    const icon = item.kind === "ai_escalated" ? "alert-circle" : "message-circle";
+                    const color = item.kind === "ai_escalated" ? "#f59e0b" : "var(--accent-hi)";
+                    // Inline relative time: just-now / Nm / Nh / Nd — no helper needed
+                    let ts = "";
+                    if (item.timestamp) {
+                      const ms = Date.now() - new Date(item.timestamp).getTime();
+                      const mins = Math.floor(ms / 60000);
+                      if (mins < 1) ts = "just now";
+                      else if (mins < 60) ts = mins + "m ago";
+                      else if (mins < 1440) ts = Math.floor(mins / 60) + "h ago";
+                      else ts = Math.floor(mins / 1440) + "d ago";
+                    }
+                    const to = item.link === "escalations" ? "escalations" : "inbox";
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => go && go(to)}
+                        className="w-full flex items-start gap-2.5 text-left px-2 py-1.5 rounded-lg transition-colors hover:bg-white hover:bg-opacity-5"
+                      >
+                        <Icon name={icon} size={14} style={{ color, marginTop: 2, flexShrink: 0 }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm truncate" style={{ color: "var(--text-hi)" }}>{item.message}</div>
+                          {ts && <div className="text-[10px]" style={{ color: "var(--text-mid)" }}>{ts}</div>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {activity.length > 8 && (
+                  <button
+                    onClick={() => go && go("inbox")}
+                    className="text-xs font-semibold mt-2"
+                    style={{ color: "var(--accent-hi)" }}
+                  >
+                    See all {activity.length} →
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Needs you + at-a-glance */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">

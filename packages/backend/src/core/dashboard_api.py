@@ -426,6 +426,115 @@ async def get_dashboard_stats(
         )
 
 
+# 2026-08-23: Activity feed for the Home "What your AI just did" widget.
+# Synthesizes a chronological feed of recent AI actions from the existing
+# tables (conversations, escalations) — no new schema. Powers the first
+# agentic-GenUI primitive: visible evidence the AI is working.
+class ActivityItem(BaseModel):
+    """One item in the AI activity feed."""
+    kind: str  # 'ai_replied' | 'ai_captured_lead' | 'ai_escalated' | 'ai_human_took_over'
+    message: str
+    customer_jid: Optional[str] = None
+    customer_name: Optional[str] = None
+    timestamp: datetime
+    link: Optional[str] = None  # where the user can go in the dashboard
+
+
+@router.get("/activity", response_model=List[ActivityItem])
+async def get_activity_feed(
+    tenant_id: Optional[str] = Query(None),
+    since_hours: int = Query(24, ge=1, le=168),
+    limit: int = Query(15, ge=1, le=50),
+):
+    """
+    Synthesize a recent-activity feed for the dashboard home widget.
+
+    Pulls from existing tables — no new schema. Returns a mixed list
+    (most-recent-first) of:
+      - AI replies to customers (from conversations where is_from_me=true)
+      - Escalations to humans (from escalations table)
+      - Lead captures (from conversations tagged as lead_source)
+    Empty list is fine; the widget renders an empty state.
+    """
+    logger.info(f"📜 Activity feed: tenant={tenant_id}, since_hours={since_hours}, limit={limit}")
+    items: List[ActivityItem] = []
+    try:
+        db = SupabaseDB()
+
+        # AI replies + escalations from the last N hours
+        params: List[Any] = [since_hours]
+        tenant_filter = ""
+        if tenant_id:
+            tenant_filter = " AND tenant_id::text = %s"
+            params.append(tenant_id)
+
+        # 1) Recent AI replies (most recent first, distinct chat_jid so we
+        #    don't spam the feed with 5 messages from the same customer)
+        replies_q = f"""
+            SELECT DISTINCT ON (chat_jid)
+                chat_jid,
+                message_content,
+                timestamp,
+                tenant_id,
+                detected_language
+            FROM conversations
+            WHERE is_from_me = true
+              AND timestamp > NOW() - (%s || ' hours')::interval
+              {tenant_filter}
+            ORDER BY chat_jid, timestamp DESC
+            LIMIT %s
+        """
+        params_replies = list(params) + [limit]
+        try:
+            for row in db.execute_query(replies_q, tuple(params_replies)) or []:
+                phone = (row.get("chat_jid") or "").split("@")[0] or "a customer"
+                lang = row.get("detected_language")
+                suffix = f" in {lang}" if lang and lang not in ("en", "unknown") else ""
+                items.append(ActivityItem(
+                    kind="ai_replied",
+                    message=f"Bijou replied to +{phone}{suffix}",
+                    customer_jid=row.get("chat_jid"),
+                    customer_name=f"+{phone}",
+                    timestamp=row.get("timestamp") or datetime.utcnow(),
+                    link="inbox",
+                ))
+        except Exception as e:
+            logger.warning(f"Activity feed: AI replies query failed: {e}")
+
+        # 2) Recent escalations
+        esc_q = f"""
+            SELECT chat_jid, reason, created_at, tenant_id, status
+            FROM escalations
+            WHERE created_at > NOW() - (%s || ' hours')::interval
+              {tenant_filter}
+            ORDER BY created_at DESC
+            LIMIT %s
+        """
+        params_esc = list(params) + [limit]
+        try:
+            for row in db.execute_query(esc_q, tuple(params_esc)) or []:
+                phone = (row.get("chat_jid") or "").split("@")[0] or "a customer"
+                reason = (row.get("reason") or "needs a human")[:80]
+                items.append(ActivityItem(
+                    kind="ai_escalated",
+                    message=f"Bijou escalated \"{reason}\" from +{phone} to you",
+                    customer_jid=row.get("chat_jid"),
+                    customer_name=f"+{phone}",
+                    timestamp=row.get("created_at") or datetime.utcnow(),
+                    link="escalations",
+                ))
+        except Exception as e:
+            logger.warning(f"Activity feed: escalations query failed: {e}")
+
+        # Sort merged feed by timestamp desc and trim
+        items.sort(key=lambda i: i.timestamp, reverse=True)
+        return items[:limit]
+    except Exception as e:
+        logger.error(f"❌ Error building activity feed: {e}")
+        # Empty list is acceptable for the widget; the empty-state copy handles it
+        return []
+
+
 @router.get("/health")
 async def dashboard_health():
     """Health check for dashboard API"""
