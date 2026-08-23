@@ -5,6 +5,64 @@ and are not auto-loaded by the FastAPI app. Each script is invoked
 manually from a developer shell that has access to the Bijou
 backend's `.env` (so it can use the Supabase service-role key).
 
+## `apply_migrations.py` — apply SQL migrations to Supabase Postgres
+
+**When to use:** after pulling new code that adds SQL files to
+`migrations-py/`, after creating a new Supabase project, or to fix
+the 3 critical failures the self-test catches
+(`/api/self-test/summary` → "new_tables_exist" + others).
+
+**What it does:** walks every `.sql` file in
+`packages/backend/migrations-py/` in lexical order, applies each in
+its own transaction, and records successful applications in a
+manifest table (`public.schema_migrations`). Idempotent: re-running
+skips already-applied files. Never drops, never deletes, never
+truncates (every migration in this repo is additive).
+
+### Quick start
+
+```bash
+# 1. Find your Supabase connection string:
+#    Supabase dashboard -> Project Settings -> Database ->
+#    Connection string -> URI
+#    Looks like: postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
+#
+# 2. Add to your .env (gitignored):
+echo 'SUPABASE_DB_URL=postgresql://postgres.lrwzlujomukzjykafmic:YOUR_PASSWORD@aws-0-.../postgres' >> .env
+
+# 3. Dry-run to see what would be applied:
+cd packages/backend
+python -m scripts.apply_migrations --dry-run
+
+# 4. Real run:
+python -m scripts.apply_migrations
+
+# 5. Re-apply a single migration (after fixing the SQL):
+python -m scripts.apply_migrations --only add_message_reasons.sql
+
+# 6. Force re-apply everything (ignores manifest):
+python -m scripts.apply_migrations --force
+```
+
+### Why it exists
+
+The Supabase REST API (used by the runtime) only allows DML, not
+DDL. To create new tables you need a direct Postgres connection.
+This script gives you one command that does the right thing for
+every migration in the repo, with idempotency and a safety net.
+
+It also re-runs cleanly: each migration is its own transaction,
+and the manifest records what's been applied.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | all migrations applied (or already in manifest) |
+| 1 | bad arguments / missing db url |
+| 2 | connection failed / no executor available |
+| 3 | a migration failed (the rest are not attempted) |
+
 ## `seed_demo_thread.py` — populate a tenant with a realistic cross-channel thread
 
 **When to use:** before a sales demo, after onboarding a new tenant who

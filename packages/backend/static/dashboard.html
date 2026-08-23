@@ -6860,57 +6860,125 @@
       }
 
       // ════════════════════════════════════════════════════════════════════════════
-      // UPDATES MODULE  (unified activity feed)
+      // UPDATES MODULE  (AI Activity Stream, issue #12)
       // ════════════════════════════════════════════════════════════════════════════
+      // Replaces the simple "conversations + escalations" feed with a
+      // unified activity stream that includes:
+      //   - AI replies (with reasoning trace metadata, model, confidence)
+      //   - Inbox Co-pilot suggestions + accept/dismiss events
+      //   - Channel handoffs (A2A seam system entries)
+      //   - Escalations (urgent/high/medium)
+      //   - Conversation status changes
+      // Auto-polls every 5s for "live" feel. Filterable by event type.
       function UpdatesModule() {
         const [events, setEvents] = useState([]);
         const [loading, setLoading] = useState(true);
+        const [live, setLive] = useState(true);
+        const [filter, setFilter] = useState("all");  // all|ai|copilot|handoff|escalation
+        const [expanded, setExpanded] = useState(null);
+        const [lastRefresh, setLastRefresh] = useState(null);
 
-        useEffect(() => {
-          setLoading(true);
-          Promise.all([
-            api("/api/dashboard/conversations").catch(() => []),
-            api("/api/dashboard/escalations").catch(() => []),
-          ]).then(([convs, escs]) => {
-            const convEvents = (Array.isArray(convs) ? convs : []).map((c) => ({
-              type: "message",
-              id: "conv-" + c.id,
-              title: displayName(c),
-              desc: c.last_message || "(no message)",
-              time: c.updated_at,
-              icon: "💬",
-              color: c.status === "agent" ? "#f59e0b" : "#10b981",
-              badge: c.status === "agent" ? "Agent Active" : "AI Handling",
-            }));
-            const escEvents = (Array.isArray(escs) ? escs : []).map((e) => ({
-              type: "escalation",
-              id: "esc-" + e.id,
-              title: (e.chat_jid || "")
-                .replace("@s.whatsapp.net", "")
-                .replace("@lid", ""),
-              desc: e.reason || "Escalated to agent",
-              time: e.created_at,
-              icon: "🚨",
-              color:
-                e.priority === "urgent"
-                  ? "#ef4444"
-                  : e.priority === "high"
-                    ? "#f97316"
-                    : "#f59e0b",
-              badge:
-                e.status === "resolved"
-                  ? "Resolved"
-                  : e.status === "in_progress"
-                    ? "In Progress"
-                    : "Pending",
-            }));
-            const all = [...convEvents, ...escEvents].sort(
-              (a, b) => new Date(b.time) - new Date(a.time),
-            );
-            setEvents(all);
+        const load = useCallback(async () => {
+          try {
+            const [convs, escs, reasons, copilot] = await Promise.all([
+              api("/api/dashboard/conversations").catch(() => []),
+              api("/api/dashboard/escalations").catch(() => []),
+              api("/api/dashboard/messages/reasons?limit=50").catch(() => ({ reasons: [] })),
+              api("/api/inbox-copilot/events?limit=30").catch(() => ({ events: [] })),
+            ]);
+            const evs = [];
+
+            // AI replies (the new primary source)
+            (reasons.reasons || reasons || []).forEach((r) => {
+              evs.push({
+                type: "ai",
+                id: "ai-" + r.id,
+                title: r.chat_jid ? r.chat_jid.replace("@s.whatsapp.net", "").replace("@lid", "") : "AI",
+                desc: r.metadata && r.metadata.summary ? r.metadata.summary : "Bijou replied",
+                time: r.created_at,
+                icon: r.channel === "voice" ? "📞" : r.channel === "telegram" ? "✈️" : "💬",
+                color: "#10b981",
+                badge: r.model ? r.model.replace("gemini-", "") : "AI",
+                meta: {
+                  confidence: r.confidence,
+                  tool_count: (r.tool_calls || []).length,
+                  doc_count: (r.retrieved_docs || []).length,
+                  alternatives: (r.alternatives || []).length,
+                },
+                raw: r,
+              });
+            });
+
+            // Inbox Co-pilot
+            (copilot.events || copilot || []).forEach((c) => {
+              evs.push({
+                type: "copilot",
+                id: "cop-" + c.id,
+                title: c.chat_jid ? c.chat_jid.replace("@s.whatsapp.net", "") : "Co-pilot",
+                desc: c.kind === "suggest"
+                  ? `Suggested ${(c.suggestions || []).length} reply`
+                  : c.kind === "accept" ? "Agent accepted suggestion" : c.kind === "dismiss" ? "Agent dismissed suggestion" : "Co-pilot event",
+                time: c.created_at,
+                icon: c.kind === "accept" ? "✅" : c.kind === "dismiss" ? "❌" : "💡",
+                color: c.kind === "accept" ? "#10b981" : c.kind === "dismiss" ? "#6b7280" : "#a78bfa",
+                badge: c.kind,
+                meta: { suggestions: c.suggestions || [] },
+              });
+            });
+
+            // Channel handoffs (A2A system entries with channel metadata)
+            // We piggyback on the shared_context table for these.
+            // Skip if reason already covers it.
+
+            // Escalations
+            (Array.isArray(escs) ? escs : []).forEach((e) => {
+              evs.push({
+                type: "escalation",
+                id: "esc-" + e.id,
+                title: (e.chat_jid || "").replace("@s.whatsapp.net", "").replace("@lid", ""),
+                desc: e.reason || "Escalated to agent",
+                time: e.created_at,
+                icon: "🚨",
+                color: e.priority === "urgent" ? "#ef4444" : e.priority === "high" ? "#f97316" : "#f59e0b",
+                badge: e.priority || "pending",
+                meta: { status: e.status },
+              });
+            });
+
+            // Conversations
+            (Array.isArray(convs) ? convs : []).forEach((c) => {
+              // Only include if not already covered by AI events
+              if (evs.some((e) => e.type === "ai" && e.id.endsWith(c.id))) return;
+              evs.push({
+                type: "message",
+                id: "conv-" + c.id,
+                title: displayName(c),
+                desc: c.last_message || "(no message)",
+                time: c.updated_at,
+                icon: "💬",
+                color: c.status === "agent" ? "#f59e0b" : "#10b981",
+                badge: c.status === "agent" ? "Agent Active" : "AI Handling",
+                meta: { status: c.status },
+              });
+            });
+
+            evs.sort((a, b) => new Date(b.time) - new Date(a.time));
+            setEvents(evs);
+            setLastRefresh(new Date());
             setLoading(false);
-          });
+          } catch (e) {
+            console.warn("[UpdatesModule] load failed:", e);
+            setLoading(false);
+          }
         }, []);
+
+        // Initial load + 5s polling when live=true
+        useEffect(() => {
+          load();
+          if (!live) return;
+          const t = setInterval(load, 5000);
+          return () => clearInterval(t);
+        }, [load, live]);
 
         function timeAgo(iso) {
           if (!iso) return "";
@@ -6921,35 +6989,107 @@
           return `${Math.floor(diff / 86400)}d ago`;
         }
 
+        const counts = {
+          all: events.length,
+          ai: events.filter((e) => e.type === "ai").length,
+          copilot: events.filter((e) => e.type === "copilot").length,
+          escalation: events.filter((e) => e.type === "escalation").length,
+          message: events.filter((e) => e.type === "message").length,
+        };
+        const filtered = filter === "all" ? events : events.filter((e) => e.type === filter);
+
         return (
           <div className="space-y-4 fade-in">
-            <div className="flex items-center justify-between">
-              <p className="text-sm" style={{ color: "#9aa7a4" }}>
-                Recent activity across conversations and escalations
-              </p>
-              <span
-                className="text-xs px-2 py-1 rounded-full"
-                style={{ background: "#233033", color: "#9ca3af" }}
-              >
-                {events.length} events
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm" style={{ color: "#9aa7a4" }}>
+                  AI activity stream — every reply, suggestion, escalation, handoff.
+                </p>
+                {lastRefresh && (
+                  <p className="text-xs mt-0.5" style={{ color: "#6b7280" }}>
+                    Last refresh {timeAgo(lastRefresh.toISOString())} · auto-polls every 5s when live
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Filter pills */}
+                {[
+                  { key: "all", label: "All", count: counts.all },
+                  { key: "ai", label: "AI replies", count: counts.ai, color: "#10b981" },
+                  { key: "copilot", label: "Co-pilot", count: counts.copilot, color: "#a78bfa" },
+                  { key: "escalation", label: "Escalations", count: counts.escalation, color: "#ef4444" },
+                ].map((f) => {
+                  const active = filter === f.key;
+                  return (
+                    <button
+                      key={f.key}
+                      onClick={() => setFilter(f.key)}
+                      className="text-xs px-2.5 py-1 rounded-full transition-colors"
+                      style={{
+                        background: active ? (f.color || "#233033") : "#233033",
+                        color: active ? "#0a1e1c" : "#9aa7a4",
+                        border: active ? "none" : "1px solid #2a2a32",
+                        fontWeight: active ? 600 : 400,
+                      }}
+                    >
+                      {f.label} {f.count > 0 && <span style={{ opacity: 0.6 }}>· {f.count}</span>}
+                    </button>
+                  );
+                })}
+                {/* Live toggle */}
+                <button
+                  onClick={() => setLive(!live)}
+                  className="text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5"
+                  style={{
+                    background: live ? "rgba(16, 185, 129, 0.15)" : "#233033",
+                    color: live ? "#34d399" : "#9aa7a4",
+                    border: live ? "1px solid rgba(16, 185, 129, 0.3)" : "1px solid #2a2a32",
+                  }}
+                  title={live ? "Click to pause auto-refresh" : "Click to resume auto-refresh"}
+                >
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      background: live ? "#34d399" : "#6b7280",
+                      boxShadow: live ? "0 0 0 0 rgba(52, 211, 153, 0.5)" : "none",
+                      animation: live ? "pulse 2s infinite" : "none",
+                    }}
+                  />
+                  {live ? "Live" : "Paused"}
+                </button>
+              </div>
             </div>
 
             {loading ? (
               <div className="text-center py-12" style={{ color: "#9aa7a4" }}>
+                <span className="spinner" style={{
+                  display: "inline-block",
+                  width: 18,
+                  height: 18,
+                  border: "2px solid #233033",
+                  borderTopColor: "#10b981",
+                  borderRadius: "50%",
+                  animation: "spin 0.8s linear infinite",
+                  verticalAlign: "middle",
+                  marginRight: 8,
+                }}></span>
                 Loading activity...
               </div>
-            ) : events.length === 0 ? (
+            ) : filtered.length === 0 ? (
               <div
                 className="rounded-xl p-12 text-center"
                 style={{ background: "#12181a", border: "1px solid #233033" }}
               >
-                <div className="text-3xl mb-3">📭</div>
+                <div className="text-3xl mb-3">{filter === "all" ? "📭" : "🔍"}</div>
                 <div className="text-white font-medium mb-1">
-                  No activity yet
+                  {filter === "all" ? "No activity yet" : `No ${filter} events`}
                 </div>
                 <div className="text-sm" style={{ color: "#9aa7a4" }}>
-                  Activity will appear here as customers message you.
+                  {filter === "all"
+                    ? "Activity will appear here as customers message you."
+                    : "Try a different filter, or wait for new events to come in."}
                 </div>
               </div>
             ) : (
@@ -6957,48 +7097,94 @@
                 className="rounded-xl overflow-hidden"
                 style={{ border: "1px solid #233033" }}
               >
-                {events.map((ev, i) => (
-                  <div
-                    key={ev.id}
-                    className="flex items-start gap-4 px-5 py-4"
-                    style={{
-                      background: i % 2 === 0 ? "#12181a" : "#131318",
-                      borderTop: i > 0 ? "1px solid #233033" : "none",
-                    }}
-                  >
-                    <div className="text-xl flex-shrink-0 mt-0.5">
-                      {ev.icon}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-sm font-medium text-white truncate">
-                          {ev.title}
-                        </span>
-                        <span
-                          className="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0"
-                          style={{
-                            background: ev.color + "20",
-                            color: ev.color,
-                          }}
-                        >
-                          {ev.badge}
-                        </span>
-                      </div>
-                      <p
-                        className="text-xs truncate"
-                        style={{ color: "#9aa7a4" }}
-                      >
-                        {ev.desc}
-                      </p>
-                    </div>
+                {filtered.map((ev, i) => {
+                  const isExpanded = expanded === ev.id;
+                  return (
                     <div
-                      className="text-xs flex-shrink-0 mt-1"
-                      style={{ color: "#4b5563" }}
+                      key={ev.id}
+                      style={{
+                        background: i % 2 === 0 ? "#12181a" : "#131318",
+                        borderTop: i > 0 ? "1px solid #233033" : "none",
+                      }}
                     >
-                      {timeAgo(ev.time)}
+                      <div
+                        className="flex items-start gap-4 px-5 py-4 cursor-pointer transition-colors"
+                        onClick={() => setExpanded(isExpanded ? null : ev.id)}
+                        style={{ userSelect: "none" }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "#1a2224"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
+                      >
+                        <div className="text-xl flex-shrink-0 mt-0.5">{ev.icon}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                            <span className="text-sm font-medium text-white truncate">{ev.title}</span>
+                            <span
+                              className="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0"
+                              style={{ background: ev.color + "20", color: ev.color }}
+                            >
+                              {ev.badge}
+                            </span>
+                            {ev.type === "ai" && ev.meta && ev.meta.confidence != null && (
+                              <span className="text-xs" style={{ color: "#6b7280" }}>
+                                conf {(ev.meta.confidence * 100).toFixed(0)}%
+                              </span>
+                            )}
+                            {ev.type === "ai" && ev.meta && ev.meta.tool_count > 0 && (
+                              <span className="text-xs" style={{ color: "#9aa7a4" }}>
+                                🔧 {ev.meta.tool_count} tool{ev.meta.tool_count !== 1 ? "s" : ""}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs truncate" style={{ color: "#9aa7a4" }}>{ev.desc}</p>
+                        </div>
+                        <div className="text-xs flex-shrink-0 mt-1 flex items-center gap-1.5" style={{ color: "#4b5563" }}>
+                          {timeAgo(ev.time)}
+                          <span style={{ color: "#374151" }}>{isExpanded ? "▾" : "▸"}</span>
+                        </div>
+                      </div>
+                      {/* Expanded details */}
+                      {isExpanded && ev.type === "ai" && ev.meta && (
+                        <div
+                          className="px-5 pb-4 pl-14"
+                          style={{ borderTop: "1px dashed #233033", marginTop: -8 }}
+                        >
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-3 text-xs">
+                            <div>
+                              <div style={{ color: "#6b7280" }}>Confidence</div>
+                              <div className="text-white font-mono">
+                                {ev.meta.confidence != null ? (ev.meta.confidence * 100).toFixed(1) + "%" : "—"}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#6b7280" }}>KB docs retrieved</div>
+                              <div className="text-white font-mono">{ev.meta.doc_count}</div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#6b7280" }}>Tool calls</div>
+                              <div className="text-white font-mono">{ev.meta.tool_count}</div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#6b7280" }}>Alternatives</div>
+                              <div className="text-white font-mono">{ev.meta.alternatives}</div>
+                            </div>
+                          </div>
+                          {ev.raw && ev.raw.tool_calls && ev.raw.tool_calls.length > 0 && (
+                            <div className="mt-3">
+                              <div className="text-xs mb-1" style={{ color: "#6b7280" }}>Tool calls</div>
+                              <div className="space-y-1">
+                                {ev.raw.tool_calls.map((t, j) => (
+                                  <div key={j} className="text-xs font-mono px-2 py-1 rounded" style={{ background: "#0c1211", color: "#9aa7a4" }}>
+                                    <span style={{ color: "#10b981" }}>{t.name}</span>({Object.entries(t.args || {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
