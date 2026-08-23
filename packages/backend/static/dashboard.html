@@ -804,6 +804,37 @@
         const [slashMenu, setSlashMenu] = useState(null); // null | [{cmd,desc,icon}]
         const [slashIdx, setSlashIdx] = useState(0); // keyboard selection index
         const [inboxSearch, setInboxSearch] = useState(""); // conversation search
+        // 2026-08-23: Reasoning Trace — tap an AI message to see why it said what
+        // it said. EU AI Act 2024 Article 13 transparency primitive. Backs onto
+        // GET /api/dashboard/messages/{message_id}/reason.
+        const [reasoningFor, setReasoningFor] = useState(null); // message_id
+        const [reasoning, setReasoning] = useState(null);       // reason row
+        const [reasoningLoading, setReasoningLoading] = useState(false);
+        const [reasoningError, setReasoningError] = useState(null);
+        const openReasoning = async (messageId) => {
+          if (!messageId) return;
+          setReasoningFor(messageId);
+          setReasoning(null);
+          setReasoningError(null);
+          setReasoningLoading(true);
+          try {
+            const r = await api(
+              `/api/dashboard/messages/${encodeURIComponent(messageId)}/reason`,
+            );
+            setReasoning(r);
+          } catch (e) {
+            // 404 means the message pre-dates the Reasoning Trace feature —
+            // render a graceful empty state instead of an error.
+            setReasoningError(e?.message || "Couldn't load reasoning");
+          }
+          setReasoningLoading(false);
+        };
+        const closeReasoning = () => {
+          setReasoningFor(null);
+          setReasoning(null);
+          setReasoningError(null);
+          setReasoningLoading(false);
+        };
 
         // Refs
         const selectedRef = useRef(null);
@@ -1544,13 +1575,29 @@
                               }}
                               dangerouslySetInnerHTML={{ __html: formatMsgContent(m.content) }}
                             />
-                            <div className="text-xs mt-1 opacity-60 text-right">
+                            <div className="text-xs mt-1 opacity-60 text-right flex items-center justify-end gap-2">
                               {m.timestamp
                                 ? new Date(m.timestamp).toLocaleTimeString([], {
                                     hour: "2-digit",
                                     minute: "2-digit",
                                   })
                                 : ""}
+                              {m.role === "assistant" && m.id && (
+                                // 2026-08-23: Reasoning Trace — small "Why?" link
+                                // that opens the side panel with KB docs, tool calls,
+                                // model, and confidence. EU AI Act 2024 transparency.
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openReasoning(m.id);
+                                  }}
+                                  className="ml-1 underline text-[10px]"
+                                  style={{ color: "inherit", opacity: 0.85 }}
+                                  title="Why did Bijou say this?"
+                                >
+                                  Why?
+                                </button>
+                              )}
                               {m.role === "assistant" && (
                                 <span className="ml-1">✓✓</span>
                               )}
@@ -1720,6 +1767,214 @@
               )}
             </div>
           </div>
+
+          {/* 2026-08-23: Reasoning Trace side panel. EU AI Act 2024
+              Article 13 transparency primitive. Tapping a "Why?" link on
+              an AI message opens this; it shows the KB docs retrieved,
+              tool calls made, model, confidence, and alternative replies
+              considered. Backed by GET /api/dashboard/messages/{id}/reason. */}
+          {reasoningFor && (
+            <>
+              <div
+                onClick={closeReasoning}
+                style={{
+                  position: "fixed",
+                  top: 0, left: 0, right: 0, bottom: 0,
+                  background: "rgba(0,0,0,0.45)",
+                  zIndex: 40,
+                }}
+              />
+              <div
+                role="dialog"
+                aria-label="Reasoning trace"
+                style={{
+                  position: "fixed",
+                  top: 0, right: 0, bottom: 0,
+                  width: "min(420px, 100vw)",
+                  background: "var(--surface-1)",
+                  borderLeft: "1px solid var(--border)",
+                  zIndex: 41,
+                  display: "flex",
+                  flexDirection: "column",
+                  boxShadow: "-12px 0 40px rgba(0,0,0,0.5)",
+                }}
+              >
+                <div
+                  className="flex items-center justify-between p-4"
+                  style={{ borderBottom: "1px solid var(--border)" }}
+                >
+                  <div>
+                    <div className="text-sm font-bold" style={{ color: "var(--text-hi)" }}>
+                      Why did Bijou say this?
+                    </div>
+                    <div className="text-xs mt-0.5" style={{ color: "var(--text-mid)" }}>
+                      EU AI Act 2024 · Article 13 · Reasoning trace
+                    </div>
+                  </div>
+                  <button
+                    onClick={closeReasoning}
+                    className="px-2 py-1 rounded-lg text-sm"
+                    style={{ background: "transparent", color: "var(--text-mid)" }}
+                    aria-label="Close reasoning panel"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {reasoningLoading && (
+                    <div className="text-sm text-center py-8" style={{ color: "var(--text-mid)" }}>
+                      <Spinner /> <span className="ml-2">Loading reasoning…</span>
+                    </div>
+                  )}
+                  {!reasoningLoading && reasoningError && (
+                    <div
+                      className="rounded-lg p-3 text-sm"
+                      style={{ background: "#f59e0b15", color: "#f59e0b", border: "1px solid #f59e0b30" }}
+                    >
+                      {reasoningError.toLowerCase().includes("404") || reasoningError.toLowerCase().includes("not found")
+                        ? "This message pre-dates the Reasoning Trace feature (shipped 2026-08-23). Newer messages will show their reasoning here."
+                        : `Couldn't load reasoning: ${reasoningError}`}
+                    </div>
+                  )}
+                  {!reasoningLoading && reasoning && (
+                    <>
+                      {/* Model + confidence */}
+                      <div className="rounded-lg p-3" style={{ background: "var(--surface-2)" }}>
+                        <div className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "var(--text-mid)" }}>Model</div>
+                        <div className="text-sm font-mono" style={{ color: "var(--text-hi)" }}>{reasoning.model || "—"}</div>
+                        {reasoning.confidence != null && (
+                          <>
+                            <div className="text-xs font-semibold uppercase tracking-wider mt-3 mb-1" style={{ color: "var(--text-mid)" }}>Confidence</div>
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="flex-1 h-1.5 rounded-full overflow-hidden"
+                                style={{ background: "var(--border)" }}
+                              >
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{
+                                    width: `${Math.round(reasoning.confidence * 100)}%`,
+                                    background: reasoning.confidence > 0.7 ? "var(--accent)" : reasoning.confidence > 0.4 ? "#f59e0b" : "#ef4444",
+                                  }}
+                                />
+                              </div>
+                              <span className="text-xs font-mono" style={{ color: "var(--text-hi)" }}>
+                                {(reasoning.confidence * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Retrieved docs */}
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-mid)" }}>
+                          Knowledge used · {Array.isArray(reasoning.retrieved_docs) ? reasoning.retrieved_docs.length : 0}
+                        </div>
+                        {(!reasoning.retrieved_docs || reasoning.retrieved_docs.length === 0) ? (
+                          <div className="text-sm" style={{ color: "var(--text-mid)" }}>No KB docs were retrieved for this reply.</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {reasoning.retrieved_docs.map((d, i) => (
+                              <div
+                                key={i}
+                                className="rounded-lg p-3"
+                                style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+                              >
+                                <div className="text-sm font-semibold" style={{ color: "var(--text-hi)" }}>
+                                  {d.title || d.doc_id || `Doc ${i + 1}`}
+                                </div>
+                                {d.relevance != null && (
+                                  <div className="text-xs mt-1" style={{ color: "var(--text-mid)" }}>
+                                    Relevance: {(d.relevance * 100).toFixed(0)}%
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Tool calls */}
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-mid)" }}>
+                          Tools called · {Array.isArray(reasoning.tool_calls) ? reasoning.tool_calls.length : 0}
+                        </div>
+                        {(!reasoning.tool_calls || reasoning.tool_calls.length === 0) ? (
+                          <div className="text-sm" style={{ color: "var(--text-mid)" }}>No tools were invoked for this reply.</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {reasoning.tool_calls.map((t, i) => (
+                              <div
+                                key={i}
+                                className="rounded-lg p-3"
+                                style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+                              >
+                                <div className="text-sm font-mono font-semibold" style={{ color: "var(--accent-hi)" }}>
+                                  {t.name}
+                                </div>
+                                {t.args && Object.keys(t.args).length > 0 && (
+                                  <pre
+                                    className="text-xs mt-1.5 overflow-x-auto"
+                                    style={{ color: "var(--text-mid)", whiteSpace: "pre-wrap" }}
+                                  >
+                                    {JSON.stringify(t.args, null, 2)}
+                                  </pre>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Alternative replies considered */}
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-mid)" }}>
+                          Alternatives considered · {Array.isArray(reasoning.alternatives) ? reasoning.alternatives.length : 0}
+                        </div>
+                        {(!reasoning.alternatives || reasoning.alternatives.length === 0) ? (
+                          <div className="text-sm" style={{ color: "var(--text-mid)" }}>No alternative replies were evaluated.</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {reasoning.alternatives.map((a, i) => (
+                              <div
+                                key={i}
+                                className="rounded-lg p-3"
+                                style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}
+                              >
+                                <div className="text-sm" style={{ color: "var(--text-hi)" }}>{a.text}</div>
+                                {a.score != null && (
+                                  <div className="text-xs mt-1" style={{ color: "var(--text-mid)" }}>
+                                    Score: {(a.score * 100).toFixed(0)}%
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Metadata footer */}
+                      {reasoning.metadata && Object.keys(reasoning.metadata).length > 0 && (
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--text-mid)" }}>
+                            Metadata
+                          </div>
+                          <pre
+                            className="rounded-lg p-3 text-xs overflow-x-auto"
+                            style={{ background: "var(--surface-2)", color: "var(--text-mid)", whiteSpace: "pre-wrap" }}
+                          >
+                            {JSON.stringify(reasoning.metadata, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
         );
       }
 
