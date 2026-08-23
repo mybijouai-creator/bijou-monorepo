@@ -1,0 +1,128 @@
+# Coolify docker-compose for Bijou AI monorepo
+#
+# Coolify reads this file to deploy the full stack as one "project"
+# with multiple services. Each service maps to one Coolify "resource"
+# with its own domain, env vars, and persistent volume.
+#
+# To use:
+#   1. In Coolify UI: "+ New Resource" -> "Docker Compose"
+#   2. Point it at this repo (GitHub: mybijouai-creator/bijou-monorepo)
+#   3. Set Base Directory: /
+#   4. Set Compose File: docker-compose.coolify.yml
+#   5. Override env vars in Coolify UI (do NOT commit real secrets here)
+#
+# All env-var values shown here are placeholders. Copy
+# ops/coolify/coolify.env.example to a Coolify env-group and fill in
+# real values per environment (staging, prod, per-tenant bridge).
+#
+# This file is meant to be edited per environment, NOT committed with
+# real secrets. The "env_file" reference below points to a file
+# created by Coolify from the env-group; that file lives in
+# /data/coolify/env/<group>/<service>.env and is gitignored.
+
+version: "3.9"
+
+x-common-env: &common-env
+  # Supabase (shared across backend + voice)
+  SUPABASE_URL: "${SUPABASE_URL:?required}"
+  SUPABASE_SERVICE_KEY: "${SUPABASE_SERVICE_KEY:?required}"
+  # Google AI
+  GEMINI_API_KEY: "${GEMINI_API_KEY:?required}"
+  # Canonical domain (the 2026-08-10 bug class — do not override with
+  # stale Fly secrets)
+  PUBLIC_URL: "https://app.mybijou.xyz"
+  # Logging
+  LOG_LEVEL: "INFO"
+  # Sentry-style error tracking (optional)
+  SENTRY_DSN: "${SENTRY_DSN:-}"
+
+services:
+  # ─── Backend (FastAPI, single multi-tenant instance) ──────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: bijou-backend:latest
+    container_name: bijou-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *common-env
+      # Stripe
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:?required}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:?required}"
+      # Email (magic links)
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      # Cal.com (booking)
+      CALCOM_CLIENT_ID: "${CALCOM_CLIENT_ID:-}"
+      CALCOM_CLIENT_SECRET: "${CALCOM_CLIENT_SECRET:-}"
+      # Nango (integrations)
+      NANGO_SECRET_KEY: "${NANGO_SECRET_KEY:-}"
+      # Feature flags
+      ENABLE_COMPOSIO: "false"
+    volumes:
+      - backend-uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # ─── Bridge (per-tenant) — one instance per tenant in production.
+  # ─── For staging, a single bridge with a test tenant. ──────────────
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge
+    image: bijou-bridge:latest
+    container_name: bijou-bridge-staging
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      <<: *common-env
+      # Bridge-specific
+      BRIDGE_URL: "http://bridge:8080"
+      BRIDGE_DB_PATH: "/data/bridge.db"
+      # WhatsApp Web auth (per-tenant session storage in the volume)
+      WHATSAPP_SESSION_PATH: "/data/whatsapp-session"
+      # Webhook to backend
+      BIJOU_BACKEND_URL: "http://backend:8080"
+      BIJOU_BACKEND_API_KEY: "${BRIDGE_API_KEY:?required}"
+    volumes:
+      - bridge-data:/data
+    healthcheck:
+      test: ["CMD", "/app/bridge", "--health-check"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ─── Landing preview (optional, for Coolify-hosted staging) ─────
+  # The production landing lives on Vercel. This is a self-hosted
+  # preview for when we want to test the React build without going
+  # through Vercel (e.g., QA in the same network as the backend).
+  landing-preview:
+    build:
+      context: .
+      dockerfile: Dockerfile.landing
+    image: bijou-landing:latest
+    container_name: bijou-landing-preview
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    profiles: ["preview"]  # only deploy with --profile preview
+
+volumes:
+  backend-uploads:
+    driver: local
+  bridge-data:
+    driver: local

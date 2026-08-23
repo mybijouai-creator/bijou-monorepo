@@ -238,6 +238,19 @@ export const Footer: React.FC = () => {
                     Terms of Service
                   </button>
                 </li>
+                {/* 2026-08-23: PDPA/GDPR self-serve data-request page. End users
+                    can exercise access / download / delete rights without
+                    logging in. Issue #26. */}
+                <li>
+                  <a
+                    href="https://app.mybijou.xyz/data-request"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-gold-400 transition-colors"
+                  >
+                    Your Data Rights
+                  </a>
+                </li>
               </ul>
               <h4 className="font-bold text-white mb-4 mt-6">Contact</h4>
               <ul className="space-y-2 text-sm text-gray-400">

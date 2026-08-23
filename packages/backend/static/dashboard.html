@@ -6381,6 +6381,61 @@
             ),
           },
           {
+            // 2026-08-23: PDPA / GDPR / MY PDPA data-subject rights
+            // (issue #26). The /data-request page is public so end users
+            // (your customers) can exercise access / download / delete
+            // rights without logging in. This card surfaces the link from
+            // the business-facing side too, so you know it exists and can
+            // point your customers to it.
+            title: "🔒 Data Rights & Privacy",
+            desc: "Self-serve data requests for you and your customers (PDPA / GDPR)",
+            content: (
+              <div className="mt-4 space-y-3">
+                <div
+                  className="text-xs p-3 rounded-lg"
+                  style={{ background: "#233033", color: "#9aa7a4" }}
+                >
+                  <p className="text-white font-semibold mb-1">
+                    Your customers can request their data
+                  </p>
+                  <p>
+                    Anyone who messaged your AI can ask for a copy of what we
+                    hold on them, or ask us to delete it — without logging in.
+                    This is required by Malaysia's PDPA 2010 and the EU GDPR.
+                  </p>
+                </div>
+
+                <a
+                  href="/data-request"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full px-4 py-3 rounded-lg text-sm font-semibold text-center"
+                  style={{ background: "#10b981", color: "#0A1E1C" }}
+                >
+                  Open Data Request Page →
+                </a>
+
+                <div className="text-xs space-y-1" style={{ color: "#9aa7a4" }}>
+                  <p>• Right of access — they get a copy in &lt;5 min</p>
+                  <p>• Right of erasure — 30-day grace period before hard delete</p>
+                  <p>• Right of portability — JSON download</p>
+                  <p>
+                    • See{" "}
+                    <a
+                      href="https://github.com/mybijouai-creator/bijou-monorepo/blob/main/docs/compliance/DATA_SUBJECT_RIGHTS.md"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "#10b981", textDecoration: "underline" }}
+                    >
+                      the full rights matrix
+                    </a>{" "}
+                    (PDPA, GDPR, UK GDPR, MY PDPA 2010)
+                  </p>
+                </div>
+              </div>
+            ),
+          },
+          {
             title: "👤 My Account",
             desc: "Your profile, login email, and security settings",
             content: (() => {

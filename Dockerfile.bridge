@@ -1,0 +1,38 @@
+# Dockerfile for packages/bridge (Bijou AI WhatsApp bridge)
+# Build context: repo root
+#   docker build -f Dockerfile.bridge -t bijou-bridge:latest .
+#
+# Coolify: point a "Docker Compose" service at this repo, set
+#   DOCKERFILE = Dockerfile.bridge
+#   PORT = 8080 (health endpoint)
+#
+# Multi-stage build because Go produces a tiny static binary. The
+# final image is ~15 MB.
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /src
+
+# Cache deps separately
+COPY packages/bridge/go.mod packages/bridge/go.sum ./
+RUN go mod download
+
+# Build
+COPY packages/bridge/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/bridge .
+
+# Final stage: distroless for security + size
+FROM gcr.io/distroless/static:nonroot
+
+WORKDIR /app
+COPY --from=builder /out/bridge /app/bridge
+
+# Each tenant gets its own bridge instance with its own SQLite db
+# mounted as a Coolify persistent volume at /data.
+VOLUME ["/data"]
+ENV DB_PATH=/data/bridge.db
+
+EXPOSE 8080
+
+USER nonroot:nonroot
+
+ENTRYPOINT ["/app/bridge"]

@@ -9,22 +9,32 @@
 ## 0. What this is
 
 Bijou AI is a **WhatsApp/Telegram AI agent** for Malaysian SMEs. The product
-has 3 deployable surfaces (landing / backend / bridge) and a multi-tenant
-SaaS engine behind them. This monorepo is the **single source of truth** for
-all of it.
+has 3 deployable surfaces today (landing / backend / bridge) and a
+**shared-nervous-system** in progress (voice / connect). Multi-tenant
+SaaS engine behind it all. This monorepo is the **single source of truth**.
 
 | Surface | Stack | Lives in | Deploys to |
 |---|---|---|---|
-| **Landing** (mybijou.xyz) | React 19 + Vite + i18n (5 locales) + Vercel serverless API | `packages/landing/` | Vercel |
-| **Backend** (app.mybijou.xyz) | Python (FastAPI) + Node lead pipeline + Supabase | `packages/backend/` | Fly.io |
-| **Bridge** (per-tenant) | Go (main.go) + SQLite | `packages/bridge/` | Fly.io |
+| **Landing** (mybijou.xyz) | React 19 + Vite + i18n (4 locales: en/ms/zh/ta) + Vercel serverless API | `packages/landing/` | Vercel |
+| **Backend** (app.mybijou.xyz) | Python 3.12 (FastAPI) + Node lead pipeline + Supabase | `packages/backend/` | **Coolify (primary)**, Fly.io (secondary) |
+| **Bridge** (per-tenant) | Go 1.24 + whatsmeow + SQLite | `packages/bridge/` | **Coolify (primary)**, Fly.io (secondary) |
+| **Voice** (forthcoming, issue #27) | Telnyx MCP server + voice AI agents + Convex RAG | `packages/voice/` (to be absorbed from `W3J-BIJOU PROJECT/`) | Coolify |
+| **Connect** (forthcoming, issue #22) | Connector-Hub (15 connectors) + Nango | `packages/connect/` (to be absorbed) | Coolify |
 | **Ops** | PowerShell / bash deploy scripts | `ops/` | local |
-| **Docs** | Strategy + 29 historical handoffs | `docs/` | this repo |
+| **Docs** | Strategy + compliance + handoffs | `docs/` | this repo |
+| **Compliance** | EU AI Act 2024 + PDPA/GDPR + model card | `docs/compliance/` | this repo |
 
-Live URLs (last verified: see `topics/bijou-prod-health-state.md` in agent memory):
-- <https://mybijou.xyz> — landing (200/307)
+Live URLs (last verified 2026-08-23):
+- <https://mybijou.xyz> — landing (200/307, Vercel)
 - <https://app.mybijou.xyz/health> — dashboard API (200)
-- <https://bijou-production.fly.dev/health> — backend (200, version 2.2.0, db: supabase)
+- <https://bijou-production.fly.dev/health> — Fly backend (200, **billing-locked** as of 2026-08-23)
+- Coolify primary: TBD (Coolify billing issue must be resolved first)
+
+**Canonical remote:** `https://github.com/mybijouai-creator/bijou-monorepo.git`
+(per CLAUDE.md; the `W3J-Dev` mirror exists for backup but is not the
+source of truth). Push via `GITHUB_PAT_TOKEN` from
+`C:\Users\W3jde\.hermes\secrets\.env.mybijou-creator` (the `mnjbold`
+gh auth has 403 on push).
 
 ---
 
@@ -35,16 +45,21 @@ Live URLs (last verified: see `topics/bijou-prod-health-state.md` in agent memor
 - Run `npx tsc --noEmit` in the package you touched. If you change `api/*.js`, exercise the endpoint with `curl` (see "verify after change" below).
 - **Never claim "fixed" unless you hit the live URL for the exact port + process the user is running.** A parallel uvicorn on port 8081 is NOT proof the live port-8000 service is fixed. (Lesson: this rule exists because of an actual 4-time repeat failure.)
 - Read `memory/MEMORY.md` "PR body claim vs reality" before writing any PR or commit message that claims live behavior.
+- **Deploy gate (added 2026-08-23):** CI is currently **locked** (GitHub Actions billing issue + Fly.io billing issue). Deploys go through Coolify manually OR `flyctl deploy --remote-only` from the project owner's terminal. Do **not** claim a backend or bridge change is "deployed" without hitting the live URL.
 
 ### Rule 2 — The right agent for the right file.
 
 | If you touch... | You are | Read |
 |---|---|---|
 | `packages/landing/**` | `bijou-frontend` | `packages/landing/AGENTS.md` |
-| `packages/backend/app/*.py` | `bijou-backend` | `packages/backend/AGENTS.md` |
+| `packages/backend/src/**/*.py` | `bijou-backend` | `packages/backend/AGENTS.md` (FastAPI) |
 | `packages/backend/app/*.cjs` (lead pipeline) | `bijou-pipeline` | `packages/backend/AGENTS.md` § Lead Pipeline |
+| `packages/backend/migrations-py/*.sql` | `bijou-data` | `packages/backend/AGENTS.md` § Schema |
 | `packages/bridge/**` | `bijou-bridge` | `packages/bridge/AGENT.md` |
-| `ops/**`, `fly.*.toml`, `vercel.json`, `.github/workflows/**` | `bijou-devops` | this file § 6 |
+| `packages/voice/**` (forthcoming) | `bijou-voice` | this file § Shared-nervous-system |
+| `packages/connect/**` (forthcoming) | `bijou-connect` | this file § Shared-nervous-system |
+| `ops/**`, `fly.*.toml`, `vercel.json`, `docker-compose.yml`, `coolify.yaml`, `.github/workflows/**` | `bijou-devops` | this file § 6 |
+| `docs/compliance/**` | `bijou-compliance` | this file § Compliance |
 | Tests, type-check, lint | `bijou-qa` | this file § 7 |
 | Any PR diff | `bijou-reviewer` | `adversarial-reviewer` skill |
 
@@ -273,6 +288,51 @@ These are real mistakes from the project's history (in `topics/` + memory). Don'
 | What was the original plan? | `docs/PROJECT_EXECUTION_PLAN.md`, `docs/SWARM_ARCHITECTURE.md` |
 | How do I deploy X? | `ops/README.md` + per-package AGENTS.md |
 | Why is Y the way it is? | grep the original PR or handoff doc |
+| What's the EU AI Act / GDPR / PDPA position? | `docs/compliance/` (3 docs) |
+| What's the shared-nervous-system plan? | `docs/superpowers/specs/2026-08-23-competitive-teardown-and-genui-roadmap.md` § Shared-nervous-system |
+| What 3rd-party repos are pending integration? | issues #22 (Connector-Hub) and #27 (Voice) |
+
+---
+
+## 12. Shared-nervous-system (in progress, locked 2026-08-23)
+
+The plan is to absorb three external projects into this monorepo so
+Bijou has a unified "connect your tools + talk to you anywhere" layer:
+
+| Repo | Target path | Issue | Status |
+|---|---|---|---|
+| `W3J-BIJOU PROJECT/` (Telnyx MCP server + 3 voice AI agents) | `packages/voice/` | #27 | Not started — security audit complete (4 SECURITY.md files written) |
+| `Connector-Hub v0.1/` (15 REST/MCP connectors + workflow engine) | `packages/connect/` | #22 | Not started — fragility audit pending (issue #30) |
+| `Contact Center v0.2/` (already deployed at contact-center.getbijou.xyz) | stays separate MVP | n/a | Already deployed; needs escalation-bug fix (issue #29) before shared-ns integration |
+
+**Decision lock (2026-08-23):** Nango (shipped today) becomes the short-term
+Integrations backend until the Connector-Hub audit (#30) finishes. If the
+audit recommends absorb, Nango is replaced. If not, Nango stays.
+
+**A2A seam (foundation landed, design not yet done):** `public.shared_context`
+table + `src/core/shared_context_api.py` is the data layer. The protocol doc
+that defines the message envelope, read/write contract, privacy posture,
+and conflict resolution is the next deliverable — issue #31.
+
+---
+
+## 13. Compliance posture (added 2026-08-23)
+
+Three lawyer-ready documents live in `docs/compliance/`:
+
+- `EU_AI_ACT_2024.md` — risk classification, Article-by-Article obligations,
+  conformity assessment, post-market monitoring
+- `DATA_SUBJECT_RIGHTS.md` — PDPA + GDPR + UK GDPR + MY PDPA 2010 rights matrix
+- `MODEL_CARD.md` — Gemini 2.5 Flash lineage, intended use, evaluation, ethics
+
+**Quick facts:**
+- Bijou is **limited-risk** (Article 50 transparency only), not high-risk
+- Right of access / erasure / portability exposed at `GET /data-request`
+- Every AI reply has a Reasoning Trace (EU AI Act Article 13 transparency)
+- Inbox Co-pilot is a human-in-the-loop gate (Article 14, voluntarily)
+- Stripe + Supabase + Google + WhatsApp + Telnyx are the subprocessors
+
+Sign-off blocks are TBD — owner action required.
 
 ---
 
