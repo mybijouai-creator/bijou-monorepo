@@ -835,6 +835,59 @@
           setReasoningError(null);
           setReasoningLoading(false);
         };
+        // 2026-08-23: Inbox Co-pilot (issue #13) — proactive suggestions
+        // while the agent is typing. NEVER auto-sends. The Use button
+        // inserts the text into the input; the agent must still hit Send.
+        const [coPilotSuggestions, setCoPilotSuggestions] = useState([]); // [{id,label,text,match_strength}]
+        const [coPilotEventId, setCoPilotEventId] = useState(null);
+        const [coPilotLoading, setCoPilotLoading] = useState(false);
+        const coPilotTimerRef = useRef(null);
+        const dismissCoPilotSuggestion = async (eventId, suggestionId) => {
+          setCoPilotSuggestions((prev) => prev.filter((s) => s.id !== suggestionId));
+          try {
+            await api("/api/inbox-copilot/action", {
+              method: "POST",
+              body: JSON.stringify({ event_id: eventId, suggestion_id: suggestionId, action: "dismiss", chat_jid: "" }),
+            });
+          } catch (_e) { /* audit log failure is non-fatal */ }
+        };
+        const useCoPilotSuggestion = async (eventId, suggestion) => {
+          // "Use" puts the text in the input. The agent must still hit Send.
+          setReply(suggestion.text);
+          setCoPilotSuggestions((prev) => prev.filter((s) => s.id !== suggestion.id));
+          try {
+            await api("/api/inbox-copilot/action", {
+              method: "POST",
+              body: JSON.stringify({ event_id: eventId, suggestion_id: suggestion.id, action: "accept", chat_jid: "" }),
+            });
+          } catch (_e) { /* non-fatal */ }
+        };
+        const requestCoPilot = async (chatJid, draft, lastCustomerMessage) => {
+          if (os_environ_INBOX_COPILOT_DISABLED) return;
+          setCoPilotLoading(true);
+          try {
+            const r = await api("/api/inbox-copilot/suggest", {
+              method: "POST",
+              body: JSON.stringify({
+                chat_jid: chatJid,
+                draft_reply: draft || "",
+                last_customer_message: lastCustomerMessage || "",
+              }),
+            });
+            setCoPilotSuggestions(r.suggestions || []);
+            setCoPilotEventId(r.event_id || null);
+          } catch (_e) {
+            setCoPilotSuggestions([]);
+            setCoPilotEventId(null);
+          }
+          setCoPilotLoading(false);
+        };
+        // Helper used by both the mount effect and the debounced typing
+        // handler. Reads "INBOX_COPILOT_DISABLED" at call time so toggling
+        // it in dev tools works without a reload.
+        const os_environ_INBOX_COPILOT_DISABLED =
+          typeof window !== "undefined" &&
+          window.__INBOX_COPILOT_DISABLED__ === true;
 
         // Refs
         const selectedRef = useRef(null);
@@ -1111,6 +1164,25 @@
             setSlashIdx(0);
           } else {
             setSlashMenu(null);
+          }
+          // 2026-08-23: Inbox Co-pilot — debounce 1.2s on typing, then ask
+          // the API for 1-3 suggestions. We pass the *current* selected
+          // chat's last customer message so the pattern engine has
+          // something to score against. Skipped while a slash command is
+          // open (the user is mid-command, not mid-reply).
+          if (coPilotTimerRef.current) clearTimeout(coPilotTimerRef.current);
+          if (!val.startsWith("/") && sel && sel.chat_jid) {
+            const lastCustomer = (() => {
+              // Find the most recent user-role message in this chat
+              if (!sel.messages) return "";
+              for (let i = sel.messages.length - 1; i >= 0; i--) {
+                if (sel.messages[i].role === "user") return sel.messages[i].content || "";
+              }
+              return "";
+            })();
+            coPilotTimerRef.current = setTimeout(() => {
+              requestCoPilot(sel.chat_jid, val, lastCustomer);
+            }, 1200);
           }
           // Signal Gem: 180ms debounce → setState("listening") while the agent
           // is typing. Clearing the box returns to "idle" immediately. Without
@@ -1656,6 +1728,78 @@
                     {/* Bottom anchor for scroll */}
                     <div ref={messagesEndRef} />
                   </div>
+
+                  {/* 2026-08-23: Inbox Co-pilot suggestion panel.
+                      Surfaces 1-3 cards above the reply input. NEVER
+                      auto-sends. Use puts the text in the input (the
+                      agent still has to hit Send). Dismiss removes the
+                      card and audit-logs. Edit first behaves like Use
+                      + places cursor at the end so the agent can adjust. */}
+                  {(coPilotSuggestions.length > 0 || coPilotLoading) && (
+                    <div
+                      className="px-4 py-2"
+                      style={{ borderTop: "1px solid var(--border)" }}
+                    >
+                      {coPilotLoading && coPilotSuggestions.length === 0 && (
+                        <div className="text-xs text-center" style={{ color: "var(--text-mid)" }}>
+                          ✨ thinking of a reply…
+                        </div>
+                      )}
+                      {coPilotSuggestions.map((s) => (
+                        <div
+                          key={s.id}
+                          className="rounded-lg p-2.5 mb-2"
+                          style={{
+                            background: "var(--surface-2)",
+                            border: "1px solid var(--border)",
+                            borderLeft: "3px solid var(--accent-hi)",
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: "var(--accent-hi)" }}>
+                              <span>✨</span>
+                              <span>{s.label}</span>
+                            </div>
+                            <button
+                              onClick={() => dismissCoPilotSuggestion(coPilotEventId, s.id)}
+                              className="text-xs"
+                              style={{ color: "var(--text-mid)" }}
+                              title="Dismiss this suggestion"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <div
+                            className="text-sm mb-2"
+                            style={{ color: "var(--text-hi)", whiteSpace: "pre-wrap" }}
+                          >
+                            {s.text}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => useCoPilotSuggestion(coPilotEventId, s)}
+                              className="px-2.5 py-1 rounded-md text-xs font-semibold"
+                              style={{ background: "var(--accent-hi)", color: "#04121a" }}
+                            >
+                              Use
+                            </button>
+                            <button
+                              onClick={() => useCoPilotSuggestion(coPilotEventId, s)}
+                              className="px-2.5 py-1 rounded-md text-xs"
+                              style={{
+                                background: "transparent",
+                                border: "1px solid var(--border)",
+                                color: "var(--text-hi)",
+                              }}
+                              title="Insert the text and let me adjust before sending"
+                            >
+                              Edit first
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   {/* New message alert banner */}
                   {newMsgAlert && (

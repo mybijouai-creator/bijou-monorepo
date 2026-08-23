@@ -701,6 +701,17 @@ def _include_routers():
     except ImportError as e:
         logger.warning(f"⚠️ Could not import message reasons API: {e}")
 
+    # Inbox Co-pilot API (issue #13).
+    # The third GenUI primitive. While the human agent is typing, the
+    # Co-pilot surfaces 1-3 suggestions. NEVER auto-sends. Audit log
+    # of every show + user action lives in public.inbox_copilot_events.
+    try:
+        from src.core.inbox_copilot_api import router as inbox_copilot_router
+        app.include_router(inbox_copilot_router)
+        logger.info("✅ Inbox Co-pilot API routes included")
+    except ImportError as e:
+        logger.warning(f"⚠️ Could not import inbox copilot API: {e}")
+
 # Include Proactive Messaging API routes
 try:
     from src.core.proactive_api import router as proactive_router
