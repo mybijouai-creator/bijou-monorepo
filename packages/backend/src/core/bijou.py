@@ -736,6 +736,19 @@ def _include_routers():
     except ImportError as e:
         logger.warning(f"⚠️ Could not import billing API: {e}")
 
+    # Self-test API (added 2026-08-23, round 6).
+    # Comprehensive system health: Supabase connectivity, the 4 new
+    # tables, AI model reachability, Stripe/Nango/Resend/Cal.com config,
+    # PUBLIC_URL canonical, disk space. Returns 200 pass/warn/degraded,
+    # 503 fail (critical). This is what Coolify's healthcheck should
+    # point at, not the trivial /health that always returns 200.
+    try:
+        from src.core.self_test_api import router as self_test_router
+        app.include_router(self_test_router)
+        logger.info("✅ Self-test API routes included")
+    except ImportError as e:
+        logger.warning(f"⚠️ Could not import self-test API: {e}")
+
 # Include Proactive Messaging API routes
 try:
     from src.core.proactive_api import router as proactive_router

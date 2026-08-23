@@ -32,7 +32,7 @@ Before deploying anything:
 1. Coolify dashboard -> "+ New" -> "Resource" -> "Application" -> "Docker Compose"
 2. Source: GitHub
 3. Repository: `mybijouai-creator/bijou-monorepo` (canonical) or
-   `W3JDev/bijou-monorepo` (mirror)
+   the upstream mirror repo
 4. Branch: `main`
 5. Base Directory: `/`
 6. Compose File: `docker-compose.coolify.yml`
@@ -191,6 +191,34 @@ as the bridge SQLite.
 
 Coolify polls `/health` every 30s. If it returns non-2xx for 3
 consecutive checks, Coolify restarts the container.
+
+**Trivial `/health` is not enough.** It returns 200 OK unconditionally
+— even if Supabase is unreachable, the new tables are missing, or the
+AI model API key is invalid. Coolify's auto-rollback never fires on
+real outages. Use `/api/self-test/summary` instead:
+
+- HTTP 200 if the system is `pass` / `warn` / `degraded` (non-critical
+  failure only — Coolify does NOT auto-rollback)
+- HTTP 503 if a critical check failed (Supabase down, AI key invalid,
+  tables missing, public URL wrong) — Coolify WILL auto-rollback
+
+Two endpoints:
+- `GET /api/self-test` — full report (8+ checks, ~1-3s response time)
+- `GET /api/self-test/summary` — just the overall verdict + critical
+  failure names (sub-100ms)
+
+For the Coolify healthcheck, point at the summary endpoint:
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/self-test/summary"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+```
+
+(Already in `docker-compose.coolify.yml`.)
 
 ### 6.2 Error tracking
 
