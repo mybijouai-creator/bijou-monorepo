@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<!--
+  PDPA / GDPR self-serve data-request page (issue #26).
+  Public, no auth. Phone + email is the auth (the data subject proves
+  control of the phone; email is the delivery channel for the export).
+  Mirrors the look of the rest of the product so it doesn't look like
+  a third-party privacy shim.
+-->
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bijou AI — Your Data, Your Rights (PDPA / GDPR)</title>
+  <link rel="icon" type="image/svg+xml" href="/static/bijou-logo.svg" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --bg: #0a0a0c;
+      --card: #16161a;
+      --border: #233033;
+      --emerald: #10b981;
+      --gold: #E3B457;
+      --text: #e5e7eb;
+      --muted: #9aa7a4;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100vh;
+    }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
+    .btn-primary {
+      background: var(--emerald); color: #000; border: none; border-radius: 10px;
+      padding: 14px 24px; font-size: 15px; font-weight: 600; cursor: pointer; width: 100%;
+    }
+    .btn-primary:hover { opacity: 0.88; }
+    .btn-primary:disabled { opacity: 0.4; cursor: default; }
+    .btn-outline {
+      background: transparent; color: #fca5a5; border: 1px solid #ef444460;
+      border-radius: 10px; padding: 14px 24px; font-size: 15px; font-weight: 600;
+      cursor: pointer; width: 100%;
+    }
+    .btn-outline:hover { background: #ef444410; }
+    .btn-outline:disabled { opacity: 0.4; cursor: default; }
+    .input {
+      width: 100%; padding: 12px; background: #0f0f12; border: 1px solid var(--border);
+      border-radius: 10px; color: var(--text); font-size: 15px; outline: none;
+    }
+    .input:focus { border-color: var(--emerald); }
+    .label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .pill {
+      display: inline-block; padding: 2px 10px; background: #10b98120; color: var(--emerald);
+      border: 1px solid #10b98140; border-radius: 20px; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    #toast {
+      position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 10px;
+      font-size: 13px; font-weight: 500; z-index: 999; display: none;
+    }
+  </style>
+</head>
+<body>
+  <nav style="border-bottom: 1px solid var(--border); background: #0f0f12;" class="px-6 py-4 flex items-center justify-between">
+    <a href="https://mybijou.xyz" class="text-white font-bold text-lg flex items-center gap-2">
+      <span style="background: var(--gold); color: #000; border-radius: 8px; padding: 4px 10px; font-size: 13px;">✨ Bijou</span>
+      <span class="text-gray-400 text-sm font-normal ml-1">Your Data, Your Rights</span>
+    </a>
+    <a href="https://mybijou.xyz" class="text-sm text-gray-400 hover:text-white transition-colors">← Back to mybijou.xyz</a>
+  </nav>
+
+  <main class="max-w-2xl mx-auto px-4 py-12">
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <span class="pill">PDPA · GDPR</span>
+      <h1 class="text-3xl font-bold text-white mt-4 mb-2">Your data, your rights.</h1>
+      <p class="text-gray-400">
+        Bijou is built for transparency. If you've ever chatted with a Bijou-powered business on WhatsApp, you can ask for a copy of every message and record we hold — or ask us to delete it entirely.
+      </p>
+    </div>
+
+    <!-- Two-action card: Access / Delete -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Access card -->
+      <div class="card p-6">
+        <div class="text-2xl mb-2">📋</div>
+        <h2 class="text-white font-bold text-lg mb-1">Get a copy of my data</h2>
+        <p class="text-gray-400 text-sm mb-4">
+          Download a JSON file with every message, contact, and lead we have for you. Free, usually within minutes.
+        </p>
+        <button id="btnAccess" onclick="showAccessForm()" class="btn-primary">Request my data</button>
+      </div>
+
+      <!-- Delete card -->
+      <div class="card p-6">
+        <div class="text-2xl mb-2">🗑️</div>
+        <h2 class="text-white font-bold text-lg mb-1">Delete my data</h2>
+        <p class="text-gray-400 text-sm mb-4">
+          Soft-delete every record. Hard-deletes after 30 days. Reversible for 30 days by replying to the confirmation email.
+        </p>
+        <button id="btnDelete" onclick="showDeleteForm()" class="btn-outline">Delete my data</button>
+      </div>
+    </div>
+
+    <!-- Access form (hidden by default) -->
+    <div id="accessForm" class="card p-6 mt-6" style="display:none">
+      <h3 class="text-white font-bold mb-4">Request a copy of your data</h3>
+      <div class="mb-4">
+        <label class="label" for="accessPhone">WhatsApp phone number</label>
+        <input id="accessPhone" class="input" placeholder="+60 12 345 6789" autocomplete="tel" />
+        <p class="text-xs text-gray-500 mt-1">Use the same number you chat with the business on. We match by digits only.</p>
+      </div>
+      <div class="mb-4">
+        <label class="label" for="accessEmail">Email to receive the download link</label>
+        <input id="accessEmail" class="input" type="email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="flex gap-2">
+        <button id="accessSubmit" onclick="submitAccess()" class="btn-primary">Send download link</button>
+        <button onclick="hideForms()" class="px-4 py-2 rounded-lg text-sm" style="background:transparent; color:var(--muted);">Cancel</button>
+      </div>
+      <div id="accessResult" class="mt-4 text-sm" style="display:none"></div>
+    </div>
+
+    <!-- Delete form (hidden by default) -->
+    <div id="deleteForm" class="card p-6 mt-6" style="display:none">
+      <h3 class="text-white font-bold mb-4">Delete all my data</h3>
+      <p class="text-sm mb-4" style="color:#fca5a5">
+        ⚠️ This is a destructive action. Every message, lead, and contact record for your phone will be soft-deleted immediately and hard-deleted after 30 days.
+      </p>
+      <div class="mb-4">
+        <label class="label" for="deletePhone">WhatsApp phone number</label>
+        <input id="deletePhone" class="input" placeholder="+60 12 345 6789" autocomplete="tel" />
+      </div>
+      <div class="mb-4">
+        <label class="label" for="deleteEmail">Email to receive the confirmation</label>
+        <input id="deleteEmail" class="input" type="email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="mb-4">
+        <label class="label" for="deleteConfirm">Type <code style="color:#fff">DELETE MY DATA</code> to confirm</label>
+        <input id="deleteConfirm" class="input" placeholder="DELETE MY DATA" autocomplete="off" />
+      </div>
+      <div class="flex gap-2">
+        <button id="deleteSubmit" onclick="submitDelete()" class="btn-outline">Delete all my data</button>
+        <button onclick="hideForms()" class="px-4 py-2 rounded-lg text-sm" style="background:transparent; color:var(--muted);">Cancel</button>
+      </div>
+      <div id="deleteResult" class="mt-4 text-sm" style="display:none"></div>
+    </div>
+
+    <!-- Footer legalese -->
+    <div class="text-xs text-gray-500 mt-8 text-center space-y-2">
+      <p>
+        This page is your right under the Malaysia Personal Data Protection Act 2010 (PDPA) Sections 12 &amp; 13 and the EU General Data Protection Regulation (GDPR) Articles 15 &amp; 17.
+      </p>
+      <p>
+        We respond within 21 days (PDPA) or 30 days (GDPR), whichever is sooner. Questions? <a href="mailto:privacy@mybijou.xyz" class="underline">privacy@mybijou.xyz</a>
+      </p>
+      <p>
+        <a href="https://mybijou.xyz" class="underline">Return to homepage</a>
+      </p>
+    </div>
+  </main>
+
+  <div id="toast"></div>
+
+  <script>
+    function toast(msg, type = "info") {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.style.cssText = `display:block;${
+        type === "error" ? "background:#ef444420;color:#ef4444;border:1px solid #ef444440"
+        : type === "success" ? "background:#10b98120;color:#10b981;border:1px solid #10b98140"
+        : "background:#1e1e24;color:#e5e7eb;border:1px solid #2a2a32"
+      }`;
+      clearTimeout(el._t);
+      el._t = setTimeout(() => { el.style.display = "none"; }, 6000);
+    }
+
+    function showAccessForm() {
+      hideForms();
+      document.getElementById("accessForm").style.display = "block";
+    }
+    function showDeleteForm() {
+      hideForms();
+      document.getElementById("deleteForm").style.display = "block";
+    }
+    function hideForms() {
+      document.getElementById("accessForm").style.display = "none";
+      document.getElementById("deleteForm").style.display = "none";
+    }
+
+    async function api(path, body) {
+      const r = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || data.message || `HTTP ${r.status}`);
+      return data;
+    }
+
+    async function submitAccess() {
+      const phone = document.getElementById("accessPhone").value.trim();
+      const email = document.getElementById("accessEmail").value.trim();
+      const submit = document.getElementById("accessSubmit");
+      const result = document.getElementById("accessResult");
+      if (!phone || !email) {
+        toast("Please enter both your phone and email.", "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.textContent = "Requesting…";
+      result.style.display = "none";
+      try {
+        const data = await api("/api/data-request/access", { phone, email });
+        result.style.display = "block";
+        if (data.token) {
+          // Dev-mode: token is inline. Production removes this and
+          // only emails the link.
+          result.innerHTML = `
+            <div style="color:#10b981; font-weight:600; margin-bottom:6px;">✓ Request received.</div>
+            <div style="color:#9aa7a4; margin-bottom:10px;">${data.message}</div>
+            <a href="/api/data-request/download/${data.token}" target="_blank" class="underline" style="color:#E3B457">
+              Download your data (dev mode)
+            </a>
+          `;
+        } else {
+          result.innerHTML = `
+            <div style="color:#10b981; font-weight:600; margin-bottom:6px;">✓ Request received.</div>
+            <div style="color:#9aa7a4;">${data.message}</div>
+          `;
+        }
+        toast("Request received. Check your email.", "success");
+      } catch (e) {
+        toast("Request failed: " + e.message, "error");
+      }
+      submit.disabled = false;
+      submit.textContent = "Send download link";
+    }
+
+    async function submitDelete() {
+      const phone = document.getElementById("deletePhone").value.trim();
+      const email = document.getElementById("deleteEmail").value.trim();
+      const confirm = document.getElementById("deleteConfirm").value.trim();
+      const submit = document.getElementById("deleteSubmit");
+      const result = document.getElementById("deleteResult");
+      if (!phone || !email) {
+        toast("Please enter both your phone and email.", "error");
+        return;
+      }
+      if (confirm.toUpperCase() !== "DELETE MY DATA") {
+        toast('Please type "DELETE MY DATA" exactly to confirm.', "error");
+        return;
+      }
+      submit.disabled = true;
+      submit.textContent = "Deleting…";
+      result.style.display = "none";
+      try {
+        const data = await api("/api/data-request/delete", { phone, email, confirm_phrase: confirm });
+        result.style.display = "block";
+        result.innerHTML = `
+          <div style="color:#fca5a5; font-weight:600; margin-bottom:6px;">✓ Deletion scheduled.</div>
+          <div style="color:#9aa7a4; margin-bottom:6px;">${data.message}</div>
+          <div style="color:#9aa7a4; font-size:12px;">Hard-delete date: ${new Date(data.grace_until).toLocaleDateString()}</div>
+        `;
+        toast("Deletion scheduled. Check your email for confirmation.", "success");
+      } catch (e) {
+        toast("Deletion request failed: " + e.message, "error");
+      }
+      submit.disabled = false;
+      submit.textContent = "Delete all my data";
+    }
+  </script>
+</body>
+</html>

@@ -712,6 +712,19 @@ def _include_routers():
     except ImportError as e:
         logger.warning(f"⚠️ Could not import inbox copilot API: {e}")
 
+    # Data Request API (issue #26).
+    # PDPA Section 12 / GDPR Article 15 right of access + Article 17
+    # right to erasure. PUBLIC endpoint (no verify_session) so anyone
+    # can exercise their data-subject rights without logging in. Phone
+    # + matching email is the auth. Audit-tracked in
+    # public.data_request_deletions.
+    try:
+        from src.core.data_request_api import router as data_request_router
+        app.include_router(data_request_router)
+        logger.info("✅ Data Request (PDPA/GDPR) API routes included")
+    except ImportError as e:
+        logger.warning(f"⚠️ Could not import data request API: {e}")
+
 # Include Proactive Messaging API routes
 try:
     from src.core.proactive_api import router as proactive_router
@@ -6040,6 +6053,23 @@ BE HELPFUL - Answer directly, then stop."""
 
 
 # FastAPI routes for health checks and status
+
+
+@app.get("/data-request", response_class=HTMLResponse)
+async def data_request_page():
+    """Public PDPA / GDPR self-serve data-request page (issue #26).
+
+    No auth. Phone + matching email is the auth. The page JS POSTs
+    to /api/data-request/access and /api/data-request/delete which
+    log requests + return signed magic-link tokens.
+    """
+    page_path = Path(__file__).parent.parent.parent / "static" / "data-request.html"
+    if page_path.exists():
+        return page_path.read_text(encoding="utf-8")
+    return HTMLResponse(
+        content="<h1>Data request page not found</h1>",
+        status_code=404,
+    )
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
