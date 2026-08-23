@@ -725,6 +725,17 @@ def _include_routers():
     except ImportError as e:
         logger.warning(f"⚠️ Could not import data request API: {e}")
 
+    # Billing API (issue #15).
+    # Self-serve Stripe Customer Portal session. Tenant-scoped via
+    # verify_session. Returns a one-time URL the user opens in a new
+    # tab to manage their subscription, payment method, and invoices.
+    try:
+        from src.core.billing_api import router as billing_router
+        app.include_router(billing_router)
+        logger.info("✅ Billing (Stripe Customer Portal) API routes included")
+    except ImportError as e:
+        logger.warning(f"⚠️ Could not import billing API: {e}")
+
 # Include Proactive Messaging API routes
 try:
     from src.core.proactive_api import router as proactive_router

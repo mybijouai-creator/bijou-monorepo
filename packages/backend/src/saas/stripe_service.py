@@ -318,6 +318,53 @@ class StripePaymentService:
             logger.error(f"❌ Unexpected webhook error: {type(e).__name__}: {e}", exc_info=True)
             return False
 
+    def create_portal_session(
+        self,
+        tenant_id: str,
+        return_url: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Create a Stripe Customer Portal session.
+
+        The Customer Portal is a hosted Stripe page where the customer
+        can: update payment method, see invoices, change plan,
+        cancel subscription. The user returns to `return_url`
+        (defaults to the dashboard billing tab) when done.
+
+        Args:
+            tenant_id: Tenant UUID
+            return_url: Where Stripe sends the user back when they
+                click "back to [app]". Default: the dashboard billing tab.
+
+        Returns:
+            dict: {"url": "https://billing.stripe.com/...", "session_id": "..."}
+            or None on failure.
+        """
+        try:
+            customer_id = self.create_or_get_customer(tenant_id)
+            if not customer_id:
+                return None
+
+            # Default the return URL to the dashboard's Billing section.
+            if not return_url:
+                base = (self.public_url or "https://app.mybijou.xyz").rstrip("/")
+                return_url = f"{base}/dashboard#billing"
+
+            session = stripe.billing_portal.Session.create(
+                customer=customer_id,
+                return_url=return_url,
+            )
+
+            logger.info(
+                f"✅ Created Customer Portal session for tenant {tenant_id}"
+            )
+            return {
+                "url": session.url,
+                "session_id": session.id,
+            }
+        except Exception as e:
+            logger.error(f"Failed to create Customer Portal session: {e}", exc_info=True)
+            return None
+
     def cancel_subscription(self, tenant_id: str) -> bool:
         """Cancel subscription for a tenant"""
         try:
