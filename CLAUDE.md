@@ -54,6 +54,15 @@ under a git credential with no push access to the upstream repo** (`git push`
 environment. Verify which identity you're pushing as before assuming a
 commit is safely backed up upstream.
 
+**2026-08-23 UPDATE — the manual escape hatch is ALSO blocked now**: a
+`flyctl deploy` attempt failed with `error building: ensure depot builder
+failed... (status 403): Your account has overdue invoices` pointing at
+`https://fly.io/dashboard/web3-933/billing`. This is a *second, separate*
+billing lock — Fly.io itself, not GitHub Actions — and it means there is
+currently **no working deploy path at all** until the Fly invoice is paid.
+Don't assume the manual `flyctl deploy` path above still works without
+checking; it worked earlier the same day and then stopped mid-session.
+
 ### Recurring bug class: stale Fly secrets overriding the canonical-domain fix
 
 `auth_api.py`/`google_oauth.py` both build user-facing URLs from
