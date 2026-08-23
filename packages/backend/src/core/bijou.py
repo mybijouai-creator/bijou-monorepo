@@ -690,6 +690,17 @@ def _include_routers():
     except ImportError as e:
         logger.warning(f"⚠️ Could not import shared context API: {e}")
 
+    # Message Reasons API (Reasoning Trace — issue #11).
+    # The "why did Bijou say that" primitive. Records per-AI-message
+    # reasoning (KB docs, tool calls, model, confidence, alternatives).
+    # EU AI Act 2024 Article 13 traceability. tenant_id from verify_session.
+    try:
+        from src.core.message_reasons_api import router as message_reasons_router
+        app.include_router(message_reasons_router)
+        logger.info("✅ Message Reasons (Reasoning Trace) API routes included")
+    except ImportError as e:
+        logger.warning(f"⚠️ Could not import message reasons API: {e}")
+
 # Include Proactive Messaging API routes
 try:
     from src.core.proactive_api import router as proactive_router
