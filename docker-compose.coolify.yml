@@ -20,7 +20,8 @@
 # created by Coolify from the env-group; that file lives in
 # /data/coolify/env/<group>/<service>.env and is gitignored.
 
-version: "3.9"
+# Compose file (no top-level `version:` key — it's been obsolete since
+# the Docker Compose v2 plugin; omitting it avoids the warning)
 
 x-common-env: &common-env
   # Supabase (shared across backend + voice)

@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bijou AI — Cross-Channel Customer Thread (A2A Demo)</title>
+  <link rel="icon" type="image/svg+xml" href="/static/bijou-logo.svg" />
+  <meta name="description" content="Live demo of the Bijou A2A seam — a unified customer conversation across WhatsApp, voice, SMS, and any future channel. Powered by shared_context." />
+
+  <!--
+    The 5th GenUI primitive (added 2026-08-23). This page is a
+    self-contained, shareable, branded demo of the A2A seam
+    (issues #23, #31). It hits the public A2A endpoint and renders
+    a single customer's cross-channel timeline.
+
+    How to read this file:
+    - It is plain HTML + JS, no build step. Saved as
+      `packages/backend/static/cross-channel-demo.html`, served
+      from `/static/cross-channel-demo.html`.
+    - To make it work for a real customer, change the
+      `DEMO_CUSTOMER_PHONE` constant below to a phone that has
+      shared_context entries in your tenant.
+    - Auth: in production this page is behind a logged-in session
+      and the API call carries the session JWT. In demo mode (no
+      session) we render a simulated thread so the page is
+      shareable without a login.
+  -->
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --canvas: #0a0f0e;
+      --surface-1: #12181a;
+      --surface-2: #1a2224;
+      --surface-3: #232c2e;
+      --border: #233033;
+      --text-hi: #f2f5f4;
+      --text-mid: #9aa7a4;
+      --text-low: #6b7875;
+      --accent: #10b981;
+      --accent-hi: #34d399;
+      --premium: #E3B457;
+      --premium-pale: #F5DC9E;
+      --bj-green: #0B3B2E;
+      --bj-green-deep: #072A1F;
+      --bj-gold: #E3B457;
+      --bj-gold-light: #F5DC9E;
+      --bj-cream: #F7F4EC;
+
+      --wa-green: #25D366;
+      --voice-blue: #5B8DEF;
+      --sms-purple: #A78BFA;
+      --email-amber: #F59E0B;
+      --telegram-cyan: #38BDF8;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      background: var(--canvas);
+      color: var(--text-hi);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Subtle background pattern */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(11, 59, 46, 0.4), transparent 70%),
+        radial-gradient(ellipse 60% 40% at 80% 90%, rgba(227, 180, 87, 0.08), transparent 60%);
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 32px 20px 80px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--bj-gold), var(--bj-gold-light));
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      color: var(--bj-green-deep);
+      font-weight: 800;
+      font-size: 18px;
+      box-shadow: 0 4px 16px rgba(227, 180, 87, 0.3);
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 18px;
+    }
+    .brand span { color: var(--premium); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--accent-hi);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+    .badge::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      background: var(--accent-hi);
+      border-radius: 50%;
+      box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.5);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.6); }
+      70% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+    }
+
+    h1 {
+      font-size: 36px;
+      line-height: 1.1;
+      font-weight: 800;
+      margin: 24px 0 12px;
+      letter-spacing: -0.02em;
+    }
+    h1 .gold {
+      background: linear-gradient(135deg, var(--bj-gold-light), var(--bj-gold));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .lede {
+      font-size: 17px;
+      line-height: 1.55;
+      color: var(--text-mid);
+      margin: 0 0 32px;
+      max-width: 640px;
+    }
+
+    /* Customer card */
+    .customer-card {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .avatar {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #0e3a2c, #1a5640);
+      display: grid;
+      place-items: center;
+      color: var(--premium);
+      font-weight: 700;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+    .customer-info { flex: 1; }
+    .customer-name {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text-hi);
+      margin: 0 0 2px;
+    }
+    .customer-meta {
+      color: var(--text-mid);
+      font-size: 13px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .channel-pills {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .channel-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .channel-pill.wa { background: rgba(37, 211, 102, 0.12); color: var(--wa-green); }
+    .channel-pill.voice { background: rgba(91, 141, 239, 0.12); color: var(--voice-blue); }
+    .channel-pill.sms { background: rgba(167, 139, 250, 0.12); color: var(--sms-purple); }
+    .channel-pill.email { background: rgba(245, 158, 11, 0.12); color: var(--email-amber); }
+    .channel-pill.telegram { background: rgba(56, 189, 248, 0.12); color: var(--telegram-cyan); }
+    .channel-pill svg { width: 12px; height: 12px; }
+
+    /* Thread */
+    .thread {
+      position: relative;
+      padding-left: 28px;
+    }
+    .thread::before {
+      content: '';
+      position: absolute;
+      left: 11px;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      background: linear-gradient(to bottom, transparent, var(--border) 5%, var(--border) 95%, transparent);
+    }
+
+    .entry {
+      position: relative;
+      margin-bottom: 18px;
+      animation: slideIn 0.4s ease-out;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-6px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    .entry::before {
+      content: '';
+      position: absolute;
+      left: -22px;
+      top: 14px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--surface-2);
+      border: 2px solid var(--border);
+    }
+    .entry.wa::before { border-color: var(--wa-green); background: var(--surface-1); }
+    .entry.voice::before { border-color: var(--voice-blue); background: var(--surface-1); }
+    .entry.sms::before { border-color: var(--sms-purple); background: var(--surface-1); }
+    .entry.email::before { border-color: var(--email-amber); background: var(--surface-1); }
+    .entry.telegram::before { border-color: var(--telegram-cyan); background: var(--surface-1); }
+
+    .entry-bubble {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 18px;
+      max-width: 620px;
+    }
+    .entry.user .entry-bubble {
+      background: var(--bj-green-deep);
+      border-color: rgba(16, 185, 129, 0.25);
+    }
+    .entry.assistant .entry-bubble {
+      background: var(--surface-2);
+    }
+    .entry-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .entry-channel {
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 10px;
+    }
+    .entry.wa .entry-channel { color: var(--wa-green); }
+    .entry.voice .entry-channel { color: var(--voice-blue); }
+    .entry.sms .entry-channel { color: var(--sms-purple); }
+    .entry.email .entry-channel { color: var(--email-amber); }
+    .entry.telegram .entry-channel { color: var(--telegram-cyan); }
+
+    .entry-role {
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .entry-role.user { background: rgba(255,255,255,0.08); color: var(--text-mid); }
+    .entry-role.assistant { background: rgba(16, 185, 129, 0.15); color: var(--accent-hi); }
+    .entry-role.system { background: rgba(245, 158, 11, 0.15); color: var(--email-amber); }
+
+    .entry-time {
+      color: var(--text-low);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+    .entry-content {
+      color: var(--text-hi);
+      line-height: 1.5;
+      font-size: 15px;
+    }
+    .entry-content em {
+      color: var(--text-mid);
+      font-style: italic;
+    }
+
+    /* Handoff annotation */
+    .handoff {
+      position: relative;
+      margin: 24px 0;
+      padding: 12px 16px 12px 38px;
+      background: linear-gradient(90deg, rgba(227, 180, 87, 0.08), transparent);
+      border-left: 3px solid var(--premium);
+      border-radius: 0 10px 10px 0;
+      font-size: 13px;
+      color: var(--premium-pale);
+      max-width: 620px;
+    }
+    .handoff::before {
+      content: '↻';
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      font-size: 18px;
+      color: var(--premium);
+    }
+    .handoff strong { color: var(--premium); }
+
+    /* Footer */
+    .footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      color: var(--text-mid);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .footer a { color: var(--accent-hi); text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+    .footer code {
+      background: var(--surface-2);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--text-hi);
+    }
+
+    /* Loading + error states */
+    .state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-mid);
+      font-size: 14px;
+    }
+    .state.error { color: #f87171; }
+    .spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 640px) {
+      .page { padding: 20px 14px 60px; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 15px; }
+      .entry-bubble { max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div class="logo">B</div>
+      <div class="brand">Bijou<span>AI</span></div>
+      <div style="flex:1"></div>
+      <div class="badge">A2A Live</div>
+    </div>
+
+    <h1>One customer. <span class="gold">Every channel.</span><br/>One timeline.</h1>
+    <p class="lede">
+      This is the A2A seam in action — the same customer's conversation
+      across <strong style="color:var(--text-hi)">WhatsApp</strong>,
+      <strong style="color:var(--text-hi)">voice</strong>, and any future
+      channel, shown in one unified timeline. Bijou's AI remembers the
+      context whether the customer typed it, said it, or will say it next.
+    </p>
+
+    <div class="customer-card" id="customer-card">
+      <div class="avatar" id="avatar">M</div>
+      <div class="customer-info">
+        <div class="customer-name" id="customer-name">Loading…</div>
+        <div class="customer-meta" id="customer-meta">…</div>
+      </div>
+      <div class="channel-pills" id="channel-pills"></div>
+    </div>
+
+    <div id="thread-container">
+      <div class="state"><span class="spinner"></span>Loading the unified thread…</div>
+    </div>
+
+    <div class="footer">
+      <p>
+        Powered by <code>public.shared_context</code> (A2A foundation,
+        issue #23) + the seam protocol
+        (<a href="https://github.com/mybijouai-creator/bijou-monorepo/blob/main/docs/superpowers/specs/2026-08-23-a2a-seam-protocol.md">spec</a>,
+        issue #31). The same customer has a single ordered history
+        across every channel, scoped to one tenant. New channels slot
+        in by writing to <code>POST /api/shared-context/append</code> with
+        the same envelope.
+      </p>
+      <p style="margin-top:12px; color: var(--text-low); font-size: 12px;">
+        Bijou AI · <a href="https://mybijou.xyz">mybijou.xyz</a> ·
+        Built in Malaysia 🇲🇾
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // ─── Configuration ────────────────────────────────────────────
+    // To run this demo against a real customer:
+    //   1. Set DEMO_CUSTOMER_PHONE to a phone that has shared_context
+    //      entries in your tenant.
+    //   2. Be logged in (the API needs a session JWT).
+    //
+    // If you're not logged in or the phone has no entries, the page
+    // falls back to a simulated thread so it's still a beautiful,
+    // shareable artifact.
+    const DEMO_CUSTOMER_PHONE = '+60123456789';  // <-- change me
+    const API_ENDPOINT = '/api/shared-context';
+    const AUTH_TOKEN = localStorage.getItem('sb-access-token') || '';  // Supabase session
+
+    // ─── Channel metadata ────────────────────────────────────────
+    const CHANNELS = {
+      whatsapp: { label: 'WhatsApp', color: 'wa', initial: 'WA', icon: '💬' },
+      voice:    { label: 'Voice',    color: 'voice', initial: 'VO', icon: '📞' },
+      sms:      { label: 'SMS',      color: 'sms', initial: 'SM', icon: '✉️' },
+      email:    { label: 'Email',    color: 'email', initial: 'EM', icon: '📧' },
+      telegram: { label: 'Telegram', color: 'telegram', initial: 'TG', icon: '✈️' },
+    };
+
+    // ─── Simulated thread (used when API not reachable / no auth) ─
+    const SIMULATED = {
+      customer: {
+        name: 'Mei Lin',
+        phone: '+60 17-234 5678',
+        channels: ['whatsapp', 'voice'],
+      },
+      entries: [
+        { channel: 'whatsapp', role: 'user',      content: 'Hi, I want to book a viewing for unit 12B this weekend.', minutes_ago: 35 },
+        { channel: 'whatsapp', role: 'assistant', content: 'Hi Mei Lin! 👋 Unit 12B is available Sat 3pm or Sun 11am — what works?', minutes_ago: 34 },
+        { channel: 'whatsapp', role: 'user',      content: 'Saturday 3pm pls', minutes_ago: 33 },
+        { channel: 'whatsapp', role: 'assistant', content: 'Booked ✅ I\'ve sent the address and your agent Jason\'s contact. See you Saturday!', minutes_ago: 32 },
+        { channel: 'whatsapp', role: 'system',    content: 'Booking confirmed · Unit 12B · Sat 15:00 · Agent: Jason Lee', minutes_ago: 31 },
+        { channel: 'voice',    role: 'system',    content: '📞 Incoming call from +60 17-234 5678', minutes_ago: 6 },
+        { channel: 'voice',    role: 'user',      content: 'Hi, it\'s Mei Lin — I just booked on WhatsApp. I need to move my Saturday viewing to Sunday, is that ok?', minutes_ago: 6 },
+        { channel: 'voice',    role: 'assistant', content: 'Of course, Mei Lin — I can see your Saturday 3pm booking for unit 12B on WhatsApp. Sunday 11am works. Sending you a confirmation now.', minutes_ago: 5 },
+        { channel: 'whatsapp', role: 'assistant', content: '🔄 Updated: Your viewing for unit 12B is now Sunday 11am (was Sat 3pm). Jason will meet you at the lobby. See you then!', minutes_ago: 4 },
+      ],
+    };
+
+    // ─── Time formatter (relative) ───────────────────────────────
+    function timeAgo(min) {
+      if (min < 1) return 'just now';
+      if (min < 60) return min + 'm ago';
+      const h = Math.floor(min / 60);
+      if (h < 24) return h + 'h ago';
+      return Math.floor(h / 24) + 'd ago';
+    }
+    function clockTime(min) {
+      const d = new Date(Date.now() - min * 60 * 1000);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // ─── Render helpers ──────────────────────────────────────────
+    function initials(name) {
+      return name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
+    }
+
+    function renderCustomer(c) {
+      document.getElementById('avatar').textContent = initials(c.name);
+      document.getElementById('customer-name').textContent = c.name;
+      document.getElementById('customer-meta').textContent = c.phone;
+      const pills = document.getElementById('channel-pills');
+      pills.innerHTML = '';
+      c.channels.forEach(ch => {
+        const meta = CHANNELS[ch];
+        if (!meta) return;
+        const pill = document.createElement('span');
+        pill.className = 'channel-pill ' + meta.color;
+        pill.textContent = meta.icon + ' ' + meta.label;
+        pills.appendChild(pill);
+      });
+    }
+
+    function renderEntry(e) {
+      const meta = CHANNELS[e.channel] || { label: e.channel, color: '' };
+      const div = document.createElement('div');
+      div.className = 'entry ' + (e.channel || '') + ' ' + (e.role || '');
+
+      const minutesAgo = e.minutes_ago !== undefined
+        ? e.minutes_ago
+        : Math.max(0, Math.floor((Date.now() - new Date(e.created_at).getTime()) / 60000));
+
+      const handoffBefore = e._handoff_before;
+
+      let html = '';
+      if (handoffBefore) {
+        html += '<div class="handoff"><strong>Channel handoff</strong> — ' + handoffBefore + '</div>';
+      }
+      html += '<div class="entry-bubble">';
+      html += '  <div class="entry-meta">';
+      html += '    <span class="entry-channel">' + meta.label + '</span>';
+      html += '    <span class="entry-role ' + (e.role || '') + '">' + (e.role || 'unknown') + '</span>';
+      html += '    <span class="entry-time">' + clockTime(minutesAgo) + ' · ' + timeAgo(minutesAgo) + '</span>';
+      html += '  </div>';
+      html += '  <div class="entry-content">' + escapeHtml(e.content) + '</div>';
+      html += '</div>';
+      div.innerHTML = html;
+      return div;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    function detectHandoff(entries) {
+      // Annotate the first entry after each channel change
+      for (let i = 1; i < entries.length; i++) {
+        if (entries[i].channel !== entries[i - 1].channel) {
+          const prevLabel = CHANNELS[entries[i - 1].channel]?.label || entries[i - 1].channel;
+          const nextLabel = CHANNELS[entries[i].channel]?.label || entries[i].channel;
+          entries[i] = { ...entries[i], _handoff_before: prevLabel + ' → ' + nextLabel };
+        }
+      }
+    }
+
+    function renderThread(entries, customer) {
+      const container = document.getElementById('thread-container');
+      container.innerHTML = '';
+      const thread = document.createElement('div');
+      thread.className = 'thread';
+      detectHandoff(entries);
+      entries.forEach(e => thread.appendChild(renderEntry(e)));
+      container.appendChild(thread);
+    }
+
+    function showError(msg) {
+      const container = document.getElementById('thread-container');
+      container.innerHTML = '<div class="state error">' + escapeHtml(msg) + '</div>';
+    }
+
+    // ─── Data load: real API or simulated ────────────────────────
+    async function loadThread() {
+      const headers = { 'Content-Type': 'application/json' };
+      if (AUTH_TOKEN) headers['Authorization'] = 'Bearer ' + AUTH_TOKEN;
+
+      try {
+        const url = API_ENDPOINT + '?phone=' + encodeURIComponent(DEMO_CUSTOMER_PHONE) + '&since_hours=72&limit=100';
+        const resp = await fetch(url, { headers, credentials: 'include' });
+        if (!resp.ok) throw new Error('API ' + resp.status);
+        const data = await resp.json();
+        if (!data.entries || data.entries.length === 0) throw new Error('No thread for this phone');
+
+        // Build customer object from entries
+        const channels = [...new Set(data.entries.map(e => e.channel))];
+        const customer = {
+          name: 'Customer ' + DEMO_CUSTOMER_PHONE.slice(-4),
+          phone: DEMO_CUSTOMER_PHONE,
+          channels: channels,
+        };
+        // Calculate minutes_ago
+        const now = Date.now();
+        const entries = data.entries.map(e => ({
+          ...e,
+          minutes_ago: Math.max(0, Math.floor((now - new Date(e.created_at).getTime()) / 60000)),
+        }));
+
+        renderCustomer(customer);
+        renderThread(entries, customer);
+      } catch (err) {
+        // Fall back to simulated thread (so the page is still demoable
+        // for visitors who aren't logged in or don't have data)
+        console.info('[A2A demo] using simulated thread:', err.message);
+        renderCustomer(SIMULATED.customer);
+        renderThread(SIMULATED.entries, SIMULATED.customer);
+      }
+    }
+
+    loadThread();
+  </script>
+</body>
+</html>
