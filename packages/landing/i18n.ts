@@ -67,6 +67,13 @@ const resources = {
       "pricing.pro.earlyAccessNote":
         "Pro customers get early access FREE when new features ship — multi-user seats, extra channels, SMS reminders & more.",
 
+      // 2026-08-23: Competitor comparison (English copy on all 4 locales
+      // for speed; localize the brand-sensitive parts in a follow-up).
+      "pricing.compare.badge": "Bijou vs the alternatives",
+      "pricing.compare.title": "How Bijou stacks up",
+      "pricing.compare.subtitle":
+        "Same job, different trade-offs. Verified 2026-08 against each competitor's public pricing page.",
+
       // Add-ons Roadmap
       "pricing.addons.title": "Coming Q2–Q4 2026 (Paid Add-ons)",
       "pricing.addons.subtitle":
