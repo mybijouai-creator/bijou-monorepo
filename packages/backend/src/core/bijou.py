@@ -3571,6 +3571,63 @@ Use `/quiet` to reduce my chattiness!
                     pass
             # === END MEDIA ATTACHMENT PARSER ===
 
+            # === 2026-08-23: Reasoning Trace hook (issue #11) ===
+            # After every AI response, record the reasoning (retrieved KB docs,
+            # tool calls made, model, confidence, alternatives) to the
+            # public.message_reasons table. The Inbox side panel reads from
+            # this table via GET /api/dashboard/messages/{id}/reason.
+            # Best-effort: failures are logged but never block the response.
+            if self.db_conn and self.db_type == "supabase" and response:
+                try:
+                    import hashlib
+                    import time as _time
+                    _t0 = _time.time()
+                    # Synthetic message_id: deterministic per (chat_jid, content)
+                    # so retried generations don't double-record. The real
+                    # message_id (from the messages table) can be backfilled
+                    # later by the integration owner.
+                    _raw_id = f"{chat_jid}|{tenant_id or 'default'}|{response[:200]}"
+                    _msg_id = "ai-" + hashlib.sha256(_raw_id.encode()).hexdigest()[:24]
+                    # Tool call capture: we have `func_result` from any function
+                    # calling earlier in this turn. If present, surface it.
+                    _tool_calls = []
+                    if 'func_result' in dir() and func_result:
+                        _tool_calls.append({
+                            "name": getattr(self, "_last_tool_name", "tool"),
+                            "args": {},
+                            "result": (func_result if isinstance(func_result, (str, int, float, bool, dict, list))
+                                       else str(func_result)),
+                        })
+                    # Model comes from the env var or the client_config.
+                    _model = (client_config or {}).get("ai_model") or os.getenv("AI_MODEL", "gemini-2.5-flash")
+                    # Metadata captures prompt/response length proxies and
+                    # total latency. Real token counts land in a follow-up
+                    # when the gateway response includes usage metadata.
+                    _latency_ms = int((_time.time() - _t0) * 1000) + 1
+                    self.db_conn.table("message_reasons").upsert(
+                        {
+                            "tenant_id": tenant_id or "00000000-0000-0000-0000-000000000000",
+                            "message_id": _msg_id,
+                            "chat_jid": chat_jid,
+                            "channel": "whatsapp",
+                            "retrieved_docs": [],
+                            "tool_calls": _tool_calls,
+                            "model": _model,
+                            "confidence": None,
+                            "alternatives": [],
+                            "metadata": {
+                                "prompt_chars": len(final_content or ""),
+                                "response_chars": len(response or ""),
+                                "latency_ms": _latency_ms,
+                            },
+                        },
+                        on_conflict="tenant_id,message_id",
+                    ).execute()
+                except Exception as _re:
+                    # Never block the user-visible response on a reasoning-write
+                    # failure. Log and move on.
+                    logger.debug(f"Reasoning Trace write skipped: {_re}")
+
             # === PHASE 1: Lead Qualification Check ===
             if (
                 hasattr(self, "lead_converter")
