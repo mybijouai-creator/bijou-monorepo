@@ -736,6 +736,18 @@ def _include_routers():
     except ImportError as e:
         logger.warning(f"⚠️ Could not import billing API: {e}")
 
+    # Outreach Consent API (issue #14, PDPA affirmative-consent half).
+    # Records + revokes + audits per-contact consent for outreach
+    # campaigns. The start_campaign endpoint in outreach_api.py checks
+    # this table before queueing — without an active consent row, a
+    # campaign cannot message the contact.
+    try:
+        from src.core.outreach_consent_api import router as outreach_consent_router
+        app.include_router(outreach_consent_router)
+        logger.info("✅ Outreach Consent (PDPA) API routes included")
+    except ImportError as e:
+        logger.warning(f"⚠️ Could not import outreach consent API: {e}")
+
     # Self-test API (added 2026-08-23, round 6).
     # Comprehensive system health: Supabase connectivity, the 4 new
     # tables, AI model reachability, Stripe/Nango/Resend/Cal.com config,

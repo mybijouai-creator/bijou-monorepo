@@ -175,6 +175,71 @@ they are by definition the data subject (or an authorized agent of).
 
 ---
 
+## 3.5 Affirmative consent (the OTHER half of PDPA / GDPR)
+
+Right of access / erasure is the **deletion** side of data-subject
+rights. The other half is **affirmative consent** — proving that
+the customer *agreed* to receive marketing / outreach messages
+*before* we sent them.
+
+This is the section most projects get wrong, and the section that
+gets the most regulator attention.
+
+### 3.5.1 The contract
+
+A contact cannot be included in any outreach campaign unless there
+is at least one row in `public.outreach_consent_log` with
+`consent_type IN ('opt_in', 'transactional')` and
+`revoked_at IS NULL`. This is enforced at the **API layer** in
+`start_campaign` (refuses with HTTP 412 if any contact lacks consent),
+not just at the database level. PDPA / GDPR failure modes are at the
+**application**, not the database.
+
+### 3.5.2 The API
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/outreach/consent/record` | POST | Record a new consent (web opt-in, SMS keyword, CSV import with historical proof) |
+| `/api/outreach/consent/status` | GET | Check current consent state for a single contact |
+| `/api/outreach/consent/{id}/revoke` | POST | Soft-revoke (keeps the row for audit, stamps `revoked_at`) |
+| `/api/outreach/consent/audit` | GET | Full audit trail for a contact (for regulators) |
+| `/api/outreach/consent/check-bulk` | POST | Bulk check (used by `start_campaign` before queueing) |
+
+Every row records:
+- `consent_type` (opt_in / opt_out / transactional / imported_legacy)
+- `consent_text` (the exact text the contact agreed to)
+- `channel` (web_form / whatsapp / sms / email / in_person / api / imported)
+- `source` (form / csv_import / api / whatsapp_keyword)
+- `ip_address`, `user_agent` (when applicable)
+- `granted_at`, `expires_at`, `revoked_at`, `revoked_reason`
+
+### 3.5.3 Revocation is soft
+
+We never DELETE a consent row. The regulator / customer may need to
+see "yes, you did have consent on 2025-01-15, and you revoked it
+on 2025-03-22" — that's the only correct behavior under PDPA /
+GDPR. Soft-revocation is the only acceptable answer.
+
+### 3.5.4 What the owner does
+
+If a customer complains "I never opted in":
+
+1. Open the customer's profile in the dashboard
+2. Go to "Outreach consent" → see the audit trail
+3. If the latest row is an active opt-in, point to the row: "you
+   opted in on this date from this IP agreeing to this text"
+4. If the latest row is a revocation, the customer is correct —
+   the campaign that targeted them pre-dated the revocation; apologize
+   and improve your segmentation
+
+If the customer has **no rows at all**, the campaign should never have
+targeted them. The `start_campaign` consent gate would have refused
+the queue — investigate why the gate was bypassed (e.g., campaign was
+started before the consent table existed, or contact was added to the
+segment without going through a consent flow).
+
+---
+
 ## 4. Breach notification
 
 - **GDPR Art.33:** notify the supervisory authority within 72 hours

@@ -611,6 +611,55 @@ async def start_campaign(
     if not contacts:
         raise HTTPException(status_code=400, detail="Segment has no contacts")
 
+    # PDPA / GDPR consent gate (issue #14, 2026-08-23). Refuse to start
+    # the campaign if ANY contact lacks an active outreach consent row.
+    # This is the enforcement point of the contract documented in
+    # outreach_consent_api.py — without this, "the customer complained
+    # they never opted in" is unanswerable. The owner can either:
+    #   a) record consent for the missing contacts first via
+    #      POST /api/outreach/consent/record, or
+    #   b) remove the contacts from the segment.
+    contact_ids = [c["id"] for c in contacts if c.get("id")]
+    if contact_ids:
+        try:
+            sb = _get_supabase()
+            consent_rows = (
+                sb.table("outreach_consent_log")
+                .select("contact_id, consent_type, revoked_at")
+                .eq("tenant_id", tenant_id)
+                .in_("contact_id", contact_ids)
+                .is_("revoked_at", "null")
+                .in_("consent_type", ["opt_in", "transactional"])
+                .execute()
+            )
+            consented = {r["contact_id"] for r in (getattr(consent_rows, "data", None) or [])}
+        except Exception as e:
+            # Fail closed: if we can't verify consent, we don't send.
+            # This is the safe default under PDPA.
+            logger.error("start_campaign: could not verify consent, failing closed: %s", e)
+            raise HTTPException(
+                status_code=503,
+                detail=f"Could not verify outreach consent (PDPA gate). Try again or contact support. Error: {e}",
+            )
+
+        missing = [c for c in contacts if c.get("id") and c["id"] not in consented]
+        if missing:
+            # Build a friendly error showing the first 10 names + the
+            # record endpoint so the operator knows what to do.
+            sample = ", ".join(
+                (m.get("name") or m.get("phone") or m.get("jid") or m.get("id"))[:30]
+                for m in missing[:10]
+            )
+            more = f" (+{len(missing) - 10} more)" if len(missing) > 10 else ""
+            raise HTTPException(
+                status_code=412,  # Precondition Failed
+                detail=(
+                    f"PDPA consent gate: {len(missing)} of {len(contacts)} contact(s) have no active opt-in or transactional consent. "
+                    f"Record consent via POST /api/outreach/consent/record before starting the campaign. "
+                    f"Missing: {sample}{more}"
+                ),
+            )
+
     # Calculate business-hours start times
     min_delay = campaign.get("min_delay_seconds", 120)
     max_delay = campaign.get("max_delay_seconds", 300)
