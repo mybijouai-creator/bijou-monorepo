@@ -6860,6 +6860,295 @@
       }
 
       // ════════════════════════════════════════════════════════════════════════════
+      // HEALTH MODULE  (2026-08-23, system self-test visible in the UI)
+      // ════════════════════════════════════════════════════════════════════════════
+      // Renders the structured report from /api/self-test. The full report
+      // is bigger than a sidebar — this is the dedicated detail view.
+      // The HealthBadge (in the topbar) is the at-a-glance indicator;
+      // this tab is the drill-down.
+      function HealthModule() {
+        const [report, setReport] = useState(null);
+        const [loading, setLoading] = useState(true);
+        const [autoRefresh, setAutoRefresh] = useState(true);
+        const [filter, setFilter] = useState("all");
+
+        const load = useCallback(async () => {
+          try {
+            const data = await api("/api/self-test");
+            setReport(data);
+            setLoading(false);
+          } catch (e) {
+            console.warn("[HealthModule] load failed:", e);
+            setLoading(false);
+          }
+        }, []);
+
+        useEffect(() => {
+          load();
+          if (!autoRefresh) return;
+          const t = setInterval(load, 30000);
+          return () => clearInterval(t);
+        }, [load, autoRefresh]);
+
+        if (loading && !report) {
+          return (
+            <div className="text-center py-12" style={{ color: "#9aa7a4" }}>
+              Running system self-test (9 checks, ~1-3s)…
+            </div>
+          );
+        }
+        if (!report) {
+          return (
+            <div className="rounded-xl p-12 text-center" style={{ background: "#12181a", border: "1px solid #233033" }}>
+              <div className="text-3xl mb-3">⚠️</div>
+              <div className="text-white font-medium mb-1">Could not reach the self-test endpoint</div>
+              <div className="text-sm" style={{ color: "#9aa7a4" }}>Check that the backend is up: <code>curl http://localhost:8080/health</code></div>
+            </div>
+          );
+        }
+
+        const overallColors = {
+          pass: { bg: "rgba(16, 185, 129, 0.15)", fg: "#34d399", border: "rgba(16, 185, 129, 0.3)" },
+          warn: { bg: "rgba(245, 158, 11, 0.15)", fg: "#f59e0b", border: "rgba(245, 158, 11, 0.3)" },
+          degraded: { bg: "rgba(245, 158, 11, 0.10)", fg: "#fbbf24", border: "rgba(245, 158, 11, 0.25)" },
+          fail: { bg: "rgba(239, 68, 68, 0.15)", fg: "#f87171", border: "rgba(239, 68, 68, 0.3)" },
+        };
+        const c = overallColors[report.overall] || overallColors.warn;
+
+        const filtered = filter === "all"
+          ? report.checks
+          : report.checks.filter((x) => x.status === filter);
+
+        const counts = {
+          all: report.checks.length,
+          pass: report.checks.filter((x) => x.status === "pass").length,
+          fail: report.checks.filter((x) => x.status === "fail").length,
+          warn: report.checks.filter((x) => x.status === "warn").length,
+          skip: report.checks.filter((x) => x.status === "skip").length,
+        };
+
+        return (
+          <div className="space-y-4 fade-in">
+            <div
+              className="rounded-xl p-5"
+              style={{ background: c.bg, border: `1px solid ${c.border}` }}
+            >
+              <div className="flex items-start justify-between flex-wrap gap-3">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span
+                      className="px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider"
+                      style={{ background: c.fg, color: "#0a1e1c" }}
+                    >
+                      {report.overall}
+                    </span>
+                    <span className="text-sm font-medium" style={{ color: c.fg }}>
+                      {report.overall === "pass" && "All systems operational"}
+                      {report.overall === "warn" && "Operational with warnings"}
+                      {report.overall === "degraded" && "Degraded — non-critical issue"}
+                      {report.overall === "fail" && "Critical failure — auto-rollback may have triggered"}
+                    </span>
+                  </div>
+                  <p className="text-xs" style={{ color: "#9aa7a4" }}>
+                    {report.summary.passing}/{report.summary.total} checks passing · {report.summary.failing} failing · {report.summary.warnings} warnings · {report.summary.skipped} skipped · {report.elapsed_ms}ms
+                  </p>
+                  {report.summary.critical_failures.length > 0 && (
+                    <p className="text-sm mt-2" style={{ color: "#f87171" }}>
+                      <strong>Critical:</strong> {report.summary.critical_failures.join(", ")}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setAutoRefresh(!autoRefresh)}
+                    className="text-xs px-2.5 py-1 rounded-full"
+                    style={{
+                      background: autoRefresh ? "rgba(16, 185, 129, 0.15)" : "#233033",
+                      color: autoRefresh ? "#34d399" : "#9aa7a4",
+                      border: autoRefresh ? "1px solid rgba(16, 185, 129, 0.3)" : "1px solid #2a2a32",
+                    }}
+                    title={autoRefresh ? "Click to pause auto-refresh (30s)" : "Click to resume auto-refresh"}
+                  >
+                    {autoRefresh ? "● Live · 30s" : "○ Paused"}
+                  </button>
+                  <button
+                    onClick={load}
+                    className="text-xs px-2.5 py-1 rounded-full"
+                    style={{ background: "#233033", color: "#9aa7a4", border: "1px solid #2a2a32" }}
+                    title="Re-run all checks now"
+                  >
+                    ↻ Re-run
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {[
+                { key: "all", label: "All", color: "#9aa7a4" },
+                { key: "pass", label: "Passing", color: "#10b981" },
+                { key: "fail", label: "Failing", color: "#ef4444" },
+                { key: "warn", label: "Warnings", color: "#f59e0b" },
+                { key: "skip", label: "Skipped", color: "#6b7280" },
+              ].map((f) => {
+                const active = filter === f.key;
+                return (
+                  <button
+                    key={f.key}
+                    onClick={() => setFilter(f.key)}
+                    className="text-xs px-2.5 py-1 rounded-full"
+                    style={{
+                      background: active ? f.color : "#233033",
+                      color: active ? "#0a1e1c" : f.color,
+                      border: active ? "none" : `1px solid ${f.color}30`,
+                      fontWeight: active ? 600 : 400,
+                    }}
+                  >
+                    {f.label} · {counts[f.key]}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #233033" }}>
+              {filtered.map((chk, i) => {
+                const statusColors = {
+                  pass: { fg: "#10b981", bg: "rgba(16, 185, 129, 0.12)" },
+                  fail: { fg: "#ef4444", bg: "rgba(239, 68, 68, 0.12)" },
+                  warn: { fg: "#f59e0b", bg: "rgba(245, 158, 11, 0.12)" },
+                  skip: { fg: "#6b7280", bg: "rgba(107, 114, 128, 0.12)" },
+                };
+                const sc = statusColors[chk.status] || statusColors.skip;
+                const marker = chk.status === "pass" ? "✓" : chk.status === "fail" ? "✗" : chk.status === "warn" ? "!" : "—";
+                return (
+                  <div
+                    key={chk.name}
+                    className="flex items-start gap-4 px-5 py-4"
+                    style={{
+                      background: i % 2 === 0 ? "#12181a" : "#131318",
+                      borderTop: i > 0 ? "1px solid #233033" : "none",
+                    }}
+                  >
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+                      style={{ background: sc.bg, color: sc.fg }}
+                    >
+                      {marker}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="text-sm font-medium text-white">{chk.name}</span>
+                        {chk.critical && (
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "rgba(239, 68, 68, 0.15)", color: "#fca5a5" }}>
+                            critical
+                          </span>
+                        )}
+                        <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: sc.bg, color: sc.fg }}>
+                          {chk.status}
+                        </span>
+                        {chk.latency_ms != null && (
+                          <span className="text-xs" style={{ color: "#6b7280" }}>{chk.latency_ms}ms</span>
+                        )}
+                      </div>
+                      <p className="text-xs" style={{ color: "#9aa7a4" }}>{chk.detail}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="text-xs" style={{ color: "#6b7280" }}>
+              <p>
+                This page is wired to <code style={{ background: "#0c1211", padding: "1px 6px", borderRadius: 3, color: "#9aa7a4" }}>GET /api/self-test</code>.
+                The same endpoint powers the Coolify healthcheck and the navbar status badge.
+              </p>
+              <p className="mt-1">
+                A <code style={{ background: "#0c1211", padding: "1px 6px", borderRadius: 3, color: "#9aa7a4" }}>fail</code> overall = HTTP 503, which
+                triggers Coolify's auto-rollback to the last green deploy.
+              </p>
+            </div>
+          </div>
+        );
+      }
+
+      // HEALTH BADGE  (topbar pill — always visible)
+      // ════════════════════════════════════════════════════════════════════════════
+      // A compact indicator that lives in the navbar. Polls the summary
+      // endpoint every 60s and shows the current verdict. Clicking the
+      // badge jumps to the full Health tab. Critical failures turn red
+      // and pulse so the operator can't miss them.
+      function HealthBadge({ onClick }) {
+        const [summary, setSummary] = useState(null);
+
+        useEffect(() => {
+          const tick = () => {
+            api("/api/self-test/summary")
+              .then((s) => setSummary(s))
+              .catch(() => setSummary({ overall: "fail", summary: { critical_failures: ["unreachable"] } }));
+          };
+          tick();
+          const t = setInterval(tick, 60000);
+          return () => clearInterval(t);
+        }, []);
+
+        if (!summary) {
+          return (
+            <span className="text-xs px-2.5 py-1.5 rounded-md" style={{ background: "#233033", color: "#6b7280" }}>
+              ···
+            </span>
+          );
+        }
+
+        const colors = {
+          pass: { bg: "rgba(16, 185, 129, 0.12)", fg: "#34d399", dot: "#34d399", label: "Healthy" },
+          warn: { bg: "rgba(245, 158, 11, 0.12)", fg: "#f59e0b", dot: "#f59e0b", label: "Warnings" },
+          degraded: { bg: "rgba(245, 158, 11, 0.10)", fg: "#fbbf24", dot: "#fbbf24", label: "Degraded" },
+          fail: { bg: "rgba(239, 68, 68, 0.18)", fg: "#fca5a5", dot: "#ef4444", label: "Issues" },
+        };
+        const c = colors[summary.overall] || colors.warn;
+        const crits = summary.summary && summary.summary.critical_failures ? summary.summary.critical_failures : [];
+        const title = summary.overall === "pass"
+          ? "All systems operational · click for details"
+          : `${summary.overall.toUpperCase()}: ${crits.join(", ") || "see Health tab for details"}`;
+
+        return (
+          <button
+            onClick={onClick}
+            className="text-xs px-2.5 py-1.5 rounded-md flex items-center gap-1.5 transition-colors hover:bg-white hover:bg-opacity-5"
+            style={{ background: c.bg, color: c.fg, border: `1px solid ${c.dot}40` }}
+            title={title}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: c.dot,
+                boxShadow: summary.overall === "fail" ? "0 0 0 0 rgba(239, 68, 68, 0.5)" : "none",
+                animation: summary.overall === "fail" ? "pulse 2s infinite" : "none",
+              }}
+            />
+            <span style={{ fontWeight: 500 }}>{c.label}</span>
+            {crits.length > 0 && (
+              <span
+                style={{
+                  background: c.dot,
+                  color: "#0a1e1c",
+                  borderRadius: 999,
+                  padding: "0 5px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  minWidth: 14,
+                  textAlign: "center",
+                }}
+              >
+                {crits.length}
+              </span>
+            )}
+          </button>
+        );
+      }
+
       // UPDATES MODULE  (AI Activity Stream, issue #12)
       // ════════════════════════════════════════════════════════════════════════════
       // Replaces the simple "conversations + escalations" feed with a
@@ -7680,6 +7969,7 @@
           { id: "settings", label: tl("settings"), icon: "settings", group: "account" },
           { id: "help", label: tl("help_center"), icon: "life-buoy", href: "/help", group: "account" },
           { id: "updates", label: tl("updates"), icon: "activity", group: "account" },
+          { id: "health", label: "Health", icon: "activity", group: "account" },
         ];
         const NAV_GROUP_LABELS = { today: "Today", grow: "Grow", setup: "Set Up Your AI", account: "Account" };
 
@@ -8671,6 +8961,7 @@
           inbox: <InboxModule />,
           escalations: <EscalationsModule />,
           updates: <UpdatesModule />,
+          health: <HealthModule />,
           analytics: <AnalyticsModule />,
           knowledge: <KnowledgeModule />,
           ai_setup: <AiSetupModule />,
@@ -8978,6 +9269,7 @@
                           inbox: "Live conversations Bijou is handling",
                           escalations: "Chats that need a human — you",
                           updates: "Everything Bijou did recently",
+                          health: "Real-time system self-test (9 checks)",
                           analytics: "What Bijou delivered for you",
                           knowledge: "What Bijou knows about your business",
                           media: "Files shared across conversations",
@@ -8989,6 +9281,8 @@
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* System Health badge — always visible, polls /api/self-test/summary every 60s */}
+                    <HealthBadge onClick={() => setActive("health")} />
                     {/* Escalation notification bell */}
                     <button
                       onClick={() => setActive("escalations")}
