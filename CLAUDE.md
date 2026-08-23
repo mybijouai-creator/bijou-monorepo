@@ -106,6 +106,22 @@ API** — built and unit-tested with mocks only; nobody has hit
 dashboard's Integrations tab still needs the frontend Connect UI wired up to
 call it (not done as of 2026-08-23).
 
+### Shared context (A2A) — first 30-day step of issue #23
+
+The A2A shared-context layer lets Bijou's WhatsApp agent and the (forthcoming)
+Telnyx voice agent share conversation state per `(tenant_id, customer_phone)`.
+Foundation landed 2026-08-23: table `public.shared_context` (see
+`packages/backend/migrations-py/add_shared_context.sql`, RLS on with no
+permissive policies — service-role only, matches the post-v6 RLS hardening
+described in § Data + keys) plus `src/core/shared_context_api.py` mounted in
+`src/core/bijou.py::_include_routers()`. The router exposes
+`POST /api/shared-context/append` (logs a new turn) and
+`GET /api/shared-context?phone=…&since_hours=…&limit=…` (unified cross-channel
+thread view, newest first). All routes go through `verify_session` so
+`tenant_id` is always taken from the authenticated session, never client input;
+unit tests live at `tests/unit/test_shared_context.py`. See issue #23 for the
+broader 2-week roadmap.
+
 ---
 
 ## Commands
@@ -239,6 +255,17 @@ can actually fail a build.
   `AGENTS.md` claim.
 - Nested `src/core/tools/AGENT.md` and `src/saas/AGENT.md` declare a
   `packages/bijou-core/` path that does not exist.
+
+## Recent changes (2026-08-23)
+
+- **3 commits shipped this turn** (in local git, awaiting owner push):
+  - `d6b1a3c` Competitor comparison table on landing pricing
+  - `d491325` Session status doc + organized issue batch
+  - `2d833b7` "What your AI just did" activity feed on Home (first agentic-GenUI primitive)
+- **29 commits total** sit unpushed on local `main` vs `mybijouai-creator/bijou-monorepo`. The `mnjbold` git identity is authed but has 403 on push. **Owner must push from terminal.** See `docs/STATUS_2026-08-23.md`.
+- **2nd deploy blocker confirmed**: Fly.io billing is locked (separate from the GitHub Actions billing lock). Currently no working backend deploy path. **Coolify is the primary deploy target** going forward.
+- **Shared context (A2A) layer** is in progress (worker `bg_e846b3af` — see issue #23). Lets Bijou's WA agent and the (forthcoming) Telnyx voice agent share conversation state per (tenant_id, customer_phone). New `shared_context` table + `POST/GET /api/shared-context` endpoints. When worker lands, run the SQL migration manually in Supabase before restarting the dev server.
+- **3 SECURITY.md files** added (one in each of the 3 telnyx projects) with rotation runbooks. Live plaintext credentials still on disk in those 3 projects — owner action required per the runbooks.
 
 ## Conventions
 

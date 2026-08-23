@@ -680,6 +680,16 @@ def _include_routers():
     except ImportError as e:
         logger.warning(f"⚠️ Could not import KB Templates API: {e}")
 
+    # Shared context API (A2A foundation — issue #23).
+    # Cross-channel conversation state for the WA agent and the forthcoming
+    # Telnyx voice agent. tenant_id is always taken from verify_session.
+    try:
+        from src.core.shared_context_api import router as shared_context_router
+        app.include_router(shared_context_router)
+        logger.info("✅ Shared Context (A2A) API routes included")
+    except ImportError as e:
+        logger.warning(f"⚠️ Could not import shared context API: {e}")
+
 # Include Proactive Messaging API routes
 try:
     from src.core.proactive_api import router as proactive_router
