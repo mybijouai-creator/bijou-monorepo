@@ -37,6 +37,19 @@ from .email_templates import (
     cta_button as _cta_button,
     divider as _divider,
     support_row as _support_row,
+    # Transactional builders (Signal Gem 2026 edition) — the real source of
+    # truth for email content. These mirror the JS builders in
+    # `bijou_templates/email-templates/0[1-9]-*.js` + `10-*.js` line-for-line.
+    build_email_verification as _build_email_verification,
+    build_welcome_trial_start as _build_welcome_trial_start,
+    build_trial_expiry_warning as _build_trial_expiry_warning,
+    build_trial_expired as _build_trial_expired,
+    build_payment_confirmation as _build_payment_confirmation,
+    build_dashboard_access as _build_dashboard_access,
+    build_internal_signup_notify as _build_internal_signup_notify,
+    build_magic_link_login as _build_magic_link_login,
+    build_escalation_agent_notification as _build_escalation_agent_notification,
+    build_settings_test_email as _build_settings_test_email,
 )
 
 logger = logging.getLogger(__name__)
@@ -310,46 +323,18 @@ class EmailService:
 
         subject = "✅ Verify your email for Bijou AI"
 
+        # Delegate to the new Signal Gem builder — keeps the brand consistent
+        # with the JS templates and the rest of the customer-facing surface.
+        html_body = _build_email_verification(
+            name=business_name,
+            verify_url=verify_link,
+            expiry_mins=30,
+        )
+
         first = business_name.split()[0] if business_name else "there"
-
-        body = f"""
-            <div style="text-align:center;margin-bottom:28px;">
-              <div style="display:inline-block;width:72px;height:72px;background:linear-gradient(135deg,#0B3B2E,#0E4938);border-radius:20px;text-align:center;line-height:72px;font-size:36px;box-shadow:0 8px 32px rgba(227,180,87,0.3);">🔐</div>
-            </div>
-
-            <h2 style="margin:0 0 8px;font-size:24px;font-weight:900;color:#fff;text-align:center;">Confirm your email address</h2>
-            <p style="margin:0 0 32px;font-size:15px;color:#94a3b8;line-height:1.7;text-align:center;">
-              Hi <strong style="color:#e2e8f0;">{first}</strong>,<br>
-              Click the button below to verify your email and activate your Bijou AI account.
-            </p>
-
-            {self._cta(verify_link, "✓ Verify My Email Address")}
-
-            {self._card('''
-            <table width="100%" cellpadding="0" cellspacing="0"><tr>
-              <td width="32" style="vertical-align:top;padding-top:1px;padding-right:12px;font-size:18px;">&#x1F6E1;</td>
-              <td>
-                <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#a5b4fc;">Security Notice</p>
-                <p style="margin:0;font-size:12px;color:#64748b;line-height:1.6;">
-                  This link expires in <strong style="color:#f59e0b;">30 minutes</strong>.
-                  If you didn't create a Bijou AI account, you can safely ignore this email.
-                  We will never ask for your password.
-                </p>
-              </td>
-            </tr></table>''', border_color="#1e3a2f")}
-
-            <p style="margin:0 0 4px;font-size:12px;color:#475569;text-align:center;">Button not working? Paste this link into your browser:</p>
-            <p style="margin:0;font-size:11px;color:#334155;text-align:center;word-break:break-all;">
-              <a href="{verify_link}" style="color:#E3B457;text-decoration:none;">{verify_link}</a>
-            </p>
-        """
-
-        html_body = self._wrap("Verify Your Email", body,
-                               "You received this because someone signed up for Bijou AI using this email.")
-
         text_body = (
             f"Welcome to Bijou AI!\n\n"
-            f"Hi {business_name}!\n\n"
+            f"Hi {first}!\n\n"
             f"Please verify your email by visiting:\n{verify_link}\n\n"
             f"This link expires in 30 minutes.\n\n"
             f"Need help? WhatsApp us at +60 17-410 6981\n\n"
@@ -368,51 +353,25 @@ class EmailService:
 
         subject = f"🚀 Fuyoh, welcome aboard, {business_name}! Your trial starts now"
 
-        first = business_name.split()[0] if business_name else "Boss"
+        # Delegate to the Signal Gem builder. `trial_ends=None` is intentional —
+        # the JS template conditionally hides the trial-end line when the
+        # parameter is None, which is the right behaviour for a brand-new signup
+        # (the dashboard will tell them when their trial ends).
+        html_body = _build_welcome_trial_start(
+            name=business_name,
+            business_name=business_name,
+            trial_ends=None,
+        )
 
-        body = f"""
-            <h2 style="margin:0 0 6px;font-size:26px;font-weight:900;color:#fff;">Fuyoh, welcome aboard! 🎉</h2>
-            <p style="margin:0 0 28px;font-size:15px;color:#94a3b8;line-height:1.8;">
-              Hi <strong style="color:#e2e8f0;">{first}</strong>, your digital employee has just reported for duty at
-              <strong style="color:#10b981;">{business_name}</strong>.
-              Your <strong style="color:#10b981;">14-day free trial is active now</strong> — no credit card required.
-            </p>
+        text_body = (
+            f"Fuyoh, welcome aboard, {business_name}!\n\n"
+            f"Your Bijou AI trial is now active (14 days, no credit card).\n\n"
+            f"Continue setup at: {onboarding_url}\n\n"
+            f"Need help? WhatsApp us at +60 17-410 6981\n\n"
+            f"Bijou AI — app.mybijou.xyz"
+        )
 
-            <!-- Feature cards -->
-            {self._card('''<table cellpadding="0" cellspacing="0"><tr>
-              <td width="40" style="font-size:24px;padding-right:14px;vertical-align:middle;">💬</td>
-              <td>
-                <p style="margin:0 0 3px;font-size:14px;font-weight:800;color:#fff;">WhatsApp AI Agent</p>
-                <p style="margin:0;font-size:13px;color:#64748b;line-height:1.5;">Handles enquiries 24/7, qualifies leads, books appointments — automatically.</p>
-              </td>
-            </tr></table>''')}
-            {self._card('''<table cellpadding="0" cellspacing="0"><tr>
-              <td width="40" style="font-size:24px;padding-right:14px;vertical-align:middle;">📊</td>
-              <td>
-                <p style="margin:0 0 3px;font-size:14px;font-weight:800;color:#fff;">Live Analytics Dashboard</p>
-                <p style="margin:0;font-size:13px;color:#64748b;line-height:1.5;">See every chat, lead, and conversion tracked in real-time.</p>
-              </td>
-            </tr></table>''')}
-            {self._card('''<table cellpadding="0" cellspacing="0"><tr>
-              <td width="40" style="font-size:24px;padding-right:14px;vertical-align:middle;">🌍</td>
-              <td>
-                <p style="margin:0 0 3px;font-size:14px;font-weight:800;color:#fff;">Multi-Language Support</p>
-                <p style="margin:0;font-size:13px;color:#64748b;line-height:1.5;">English, Malay, Chinese, Tamil — plus Manglish mode built-in.</p>
-              </td>
-            </tr></table>''')}
-
-            <!-- Quick start CTA -->
-            {self._cta(onboarding_url, "📱 Continue Setup → Connect WhatsApp")}
-
-            <p style="margin:0;font-size:12px;color:#475569;text-align:center;">
-              Questions? WhatsApp us at <a href="https://wa.me/60174106981" style="color:#E3B457;text-decoration:none;">+60 17-410 6981</a>
-            </p>
-        """
-
-        html_body = self._wrap("14-Day Free Trial Started ✓", body,
-                               "You received this because you signed up for Bijou AI.")
-
-        return self.send_email(to, subject, html_body)
+        return self.send_email(to, subject, html_body, text_body)
 
     def send_trial_expiry_warning(
         self,
@@ -423,54 +382,39 @@ class EmailService:
     ) -> bool:
         """Send trial expiry warning (7d, 3d, 1d before expiry)."""
 
-        if days_remaining == 7:
-            emoji, urgency, color, border = "⏰", "friendly reminder", "#3b82f6", "#1d4ed8"
-        elif days_remaining == 3:
-            emoji, urgency, color, border = "⚠️", "important reminder", "#f59e0b", "#d97706"
-        else:  # 1 day
-            emoji, urgency, color, border = "🚨", "final reminder", "#ef4444", "#dc2626"
+        if days_remaining == 1:
+            emoji = "🚨"
+        elif days_remaining <= 3:
+            emoji = "⚠️"
+        elif days_remaining <= 7:
+            emoji = "⏰"
+        else:
+            emoji = "📅"
 
         day_word = "day" if days_remaining == 1 else "days"
         subject = f"{emoji} Your Bijou AI trial expires in {days_remaining} {day_word}!"
 
-        body = f"""
-            <div style="text-align:center;margin-bottom:24px;">
-              <div style="display:inline-block;background:linear-gradient(135deg,{border},{color});border-radius:16px;padding:20px 36px;">
-                <p style="margin:0;font-size:48px;">{emoji}</p>
-              </div>
-            </div>
+        # Delegate to the Signal Gem builder. The urgency tier (1d/3d/7d/30d)
+        # is handled inside the builder via `days_left`.
+        trial_end_date = (
+            f"in {days_remaining} {day_word}"
+            if days_remaining > 1
+            else "tomorrow"
+        )
+        html_body = _build_trial_expiry_warning(
+            name=business_name,
+            days_left=days_remaining,
+            trial_ends=trial_end_date,
+            upgrade_url=upgrade_url,
+        )
 
-            <h2 style="margin:0 0 8px;font-size:24px;font-weight:900;color:#fff;text-align:center;">
-              Trial ends in {days_remaining} {day_word}
-            </h2>
-            <p style="margin:0 0 28px;font-size:15px;color:#94a3b8;line-height:1.7;text-align:center;">
-              Hi <strong style="color:#e2e8f0;">{business_name}</strong>, this is a <strong style="color:{color};">{urgency}</strong>
-              that your Bijou AI trial expires in <strong style="color:{color};">{days_remaining} {day_word}</strong>.
-            </p>
+        text_body = (
+            f"Your Bijou AI trial expires in {days_remaining} {day_word}!\n\n"
+            f"Hi {business_name}, upgrade now to keep your AI assistant running:\n{upgrade_url}\n\n"
+            f"Need help? WhatsApp us at +60 17-410 6981"
+        )
 
-            {self._card(f'''
-            <p style="margin:0 0 10px;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">What you'll lose access to</p>
-            <table cellpadding="0" cellspacing="0">
-              <tr><td style="padding:4px 0;font-size:13px;color:#cbd5e1;">✨ AI-powered 24/7 WhatsApp responses</td></tr>
-              <tr><td style="padding:4px 0;font-size:13px;color:#cbd5e1;">🌍 Multi-language support (EN, MS, ZH, TA)</td></tr>
-              <tr><td style="padding:4px 0;font-size:13px;color:#cbd5e1;">📊 Real-time analytics &amp; customer insights</td></tr>
-              <tr><td style="padding:4px 0;font-size:13px;color:#cbd5e1;">⚡ Instant auto-reply to every customer</td></tr>
-            </table>''', border_color=f"{border}55", bg="#0a1f19")}
-
-            {self._cta(upgrade_url, "🚀 Upgrade Now — Keep AI Running", f"linear-gradient(135deg,{border},{color})")}
-
-            {self._card('''
-            <p style="margin:0;font-size:13px;color:#94a3b8;">
-              💰 <strong style="color:#fff;">Special offer:</strong> Upgrade before your trial ends and get
-              <strong style="color:#10b981;">20% off your first month</strong>.
-              Not ready? Reply to this email — we'll help you find the right plan.
-            </p>''', border_color="#059669", bg="#022c22")}
-        """
-
-        html_body = self._wrap("Trial Expiry Reminder", body,
-                               "You received this because your Bijou AI trial is ending soon.")
-
-        return self.send_email(to, subject, html_body)
+        return self.send_email(to, subject, html_body, text_body)
 
     def send_trial_expired_email(
         self,
@@ -482,50 +426,21 @@ class EmailService:
 
         subject = "😢 Your Bijou AI trial has ended — Reactivate now"
 
-        first = business_name.split()[0] if business_name else "there"
+        # Delegate to the Signal Gem builder. Default 7-day grace period.
+        html_body = _build_trial_expired(
+            name=business_name,
+            upgrade_url=upgrade_url,
+            grace_days=7,
+        )
 
-        body = f"""
-            <div style="text-align:center;margin-bottom:24px;">
-              <div style="display:inline-block;font-size:56px;">😢</div>
-            </div>
+        text_body = (
+            f"Your Bijou AI trial has ended.\n\n"
+            f"Hi {business_name}, your AI assistant is paused. "
+            f"Reactivate at {upgrade_url} to resume.\n\n"
+            f"Your conversation data is safe for 30 days. Need help? WhatsApp us at +60 17-410 6981"
+        )
 
-            <h2 style="margin:0 0 8px;font-size:24px;font-weight:900;color:#fff;text-align:center;">Your trial has ended</h2>
-            <p style="margin:0 0 28px;font-size:15px;color:#94a3b8;line-height:1.7;text-align:center;">
-              Hi <strong style="color:#e2e8f0;">{first}</strong>, your 14-day Bijou AI trial has ended.
-              <strong style="color:#fff;">Your AI assistant is now paused.</strong>
-            </p>
-
-            {self._card(f'''
-            <p style="margin:0 0 10px;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">Choose your plan to reactivate</p>
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr><td style="padding:6px 0;border-bottom:1px solid #1a3a2c;">
-                <p style="margin:0;font-size:14px;color:#fff;"><strong>PRO</strong> <span style="color:#10b981;">RM299/mo</span></p>
-                <p style="margin:0;font-size:12px;color:#64748b;">For small businesses &amp; solo operators</p>
-              </td></tr>
-              <tr><td style="padding:6px 0;border-bottom:1px solid #1a3a2c;">
-                <p style="margin:0;font-size:14px;color:#fff;"><strong>GROWTH</strong> <span style="color:#10b981;">RM499/mo</span></p>
-                <p style="margin:0;font-size:12px;color:#64748b;">For growing teams with higher volume</p>
-              </td></tr>
-              <tr><td style="padding:6px 0;">
-                <p style="margin:0;font-size:14px;color:#fff;"><strong>ENTERPRISE</strong> <span style="color:#E3B457;">Custom</span></p>
-                <p style="margin:0;font-size:12px;color:#64748b;">Unlimited scale, dedicated support, SLA</p>
-              </td></tr>
-            </table>''', bg="#0a1f19")}
-
-            {self._cta(upgrade_url, "✅ Reactivate Bijou AI Now")}
-
-            {self._card('''
-            <p style="margin:0;font-size:13px;color:#94a3b8;">
-              💌 Not ready yet? Your conversation data is safe for <strong style="color:#fff;">30 days</strong>.
-              Reactivate anytime and pick up right where you left off.
-              <a href="mailto:support@app.mybijou.xyz" style="color:#E3B457;text-decoration:none;">Reply to this email</a> if you need help choosing a plan.
-            </p>''', border_color="#f59e0b55", bg="#1c1400")}
-        """
-
-        html_body = self._wrap("Trial Ended", body,
-                               "You received this because your Bijou AI trial period has concluded.")
-
-        return self.send_email(to, subject, html_body)
+        return self.send_email(to, subject, html_body, text_body)
 
     def send_payment_confirmation(
         self,
@@ -539,57 +454,30 @@ class EmailService:
 
         subject = f"✅ Payment confirmed — Welcome to Bijou AI {plan_name}!"
 
-        first = business_name.split()[0] if business_name else "there"
+        # Delegate to the Signal Gem builder. invoice_id and date are
+        # positional, so we thread invoice_url into both slots for now —
+        # the JS template is flexible on these and the customer only ever
+        # cares about the download link.
+        html_body = _build_payment_confirmation(
+            name=business_name,
+            plan=plan_name,
+            amount=amount,
+            invoice_id=invoice_url,
+            billing_date="",
+            next_billing="",
+            invoice_url=invoice_url,
+        )
 
-        body = f"""
-            <div style="text-align:center;margin-bottom:24px;">
-              <div style="display:inline-block;background:linear-gradient(135deg,#064e3b,#065f46);border-radius:20px;padding:20px 28px;">
-                <p style="margin:0;font-size:40px;">🎉</p>
-              </div>
-            </div>
+        text_body = (
+            f"Payment confirmed — Welcome to Bijou AI {plan_name}!\n\n"
+            f"Hi {business_name}, your subscription is now active.\n"
+            f"Amount: {amount}\n"
+            f"Download invoice: {invoice_url}\n\n"
+            f"Open your dashboard: https://app.mybijou.xyz/dashboard"
+        )
 
-            <h2 style="margin:0 0 6px;font-size:24px;font-weight:900;color:#fff;text-align:center;">Payment Confirmed!</h2>
-            <p style="margin:0 0 28px;font-size:15px;color:#94a3b8;line-height:1.7;text-align:center;">
-              Thank you <strong style="color:#e2e8f0;">{first}</strong>! Welcome to
-              <strong style="color:#10b981;">Bijou AI {plan_name}</strong>. Your AI assistant is now fully active.
-            </p>
+        return self.send_email(to, subject, html_body, text_body)
 
-            {self._card(f'''
-            <p style="margin:0 0 12px;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">📄 Payment Details</p>
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr><td style="padding:6px 0;border-bottom:1px solid #1e293b;">
-                <span style="font-size:13px;color:#64748b;">Plan</span>
-                <span style="float:right;font-size:13px;color:#fff;font-weight:700;">{plan_name}</span>
-              </td></tr>
-              <tr><td style="padding:6px 0;border-bottom:1px solid #1e293b;">
-                <span style="font-size:13px;color:#64748b;">Amount</span>
-                <span style="float:right;font-size:13px;color:#10b981;font-weight:700;">{amount}</span>
-              </td></tr>
-              <tr><td style="padding:6px 0;">
-                <span style="font-size:13px;color:#64748b;">Status</span>
-                <span style="float:right;font-size:13px;color:#10b981;font-weight:700;">✅ Paid</span>
-              </td></tr>
-            </table>
-            <div style="text-align:center;margin-top:16px;">
-              <a href="{invoice_url}" style="font-size:13px;color:#E3B457;text-decoration:none;font-weight:600;">📥 Download Invoice →</a>
-            </div>''', bg="#0a1f19")}
-
-            {self._card('''
-            <p style="margin:0 0 10px;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">✨ What's now active for you</p>
-            <table cellpadding="0" cellspacing="0">
-              <tr><td style="padding:3px 0;font-size:13px;color:#cbd5e1;">🤖 AI responses powered by Google Gemini</td></tr>
-              <tr><td style="padding:3px 0;font-size:13px;color:#cbd5e1;">🌍 Multi-language (EN, MS, ZH, TA)</td></tr>
-              <tr><td style="padding:3px 0;font-size:13px;color:#cbd5e1;">📊 Real-time analytics dashboard</td></tr>
-              <tr><td style="padding:3px 0;font-size:13px;color:#cbd5e1;">⚡ Smart human escalation</td></tr>
-            </table>''', border_color="#059669", bg="#022c22")}
-
-            {self._cta("https://app.mybijou.xyz/dashboard", "Open My Dashboard →")}
-        """
-
-        html_body = self._wrap("Payment Confirmed", body,
-                               "You received this as a payment confirmation for your Bijou AI subscription.")
-
-        return self.send_email(to, subject, html_body)
 
     def send_dashboard_access_email(
         self,
@@ -610,39 +498,24 @@ class EmailService:
         """
         subject = "🚀 Your Bijou AI Dashboard is Ready!"
 
-        first = business_name.split()[0] if business_name else "there"
+        # Delegate to the Signal Gem builder. `plan` is optional; pass empty
+        # string when the caller doesn't supply it.
+        html_body = _build_dashboard_access(
+            name=business_name,
+            business_name=business_name,
+            plan="",
+            login_url=dashboard_url,
+        )
 
-        body = f"""
-            <div style="text-align:center;margin-bottom:28px;">
-              <div style="display:inline-block;background:linear-gradient(135deg,#0B3B2E,#0E4938);border-radius:20px;width:72px;height:72px;text-align:center;line-height:72px;font-size:36px;box-shadow:0 8px 32px rgba(227,180,87,0.35);">🚀</div>
-            </div>
+        text_body = (
+            f"Your Bijou AI dashboard is ready!\n\n"
+            f"Hi {business_name}, your subscription is now active.\n"
+            f"Open your dashboard: {dashboard_url}\n\n"
+            f"Need help? WhatsApp us at +60 17-410 6981"
+        )
 
-            <h2 style="margin:0 0 8px;font-size:24px;font-weight:900;color:#fff;text-align:center;">Your dashboard is live!</h2>
-            <p style="margin:0 0 28px;font-size:15px;color:#94a3b8;line-height:1.7;text-align:center;">
-              Hi <strong style="color:#e2e8f0;">{first}</strong>, your Bijou AI subscription is now
-              <strong style="color:#10b981;">active</strong>. Click below to open your personalised dashboard.
-            </p>
+        return self.send_email(to, subject, html_body, text_body)
 
-            {self._cta(dashboard_url, "Open My Dashboard →")}
-
-            {self._card(f'''
-            <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">Or paste this URL into your browser</p>
-            <p style="margin:0;font-size:11px;color:#E3B457;word-break:break-all;">{dashboard_url}</p>''', bg="#0a1f19")}
-
-            {self._card('''
-            <p style="margin:0 0 10px;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">What&apos;s in your dashboard</p>
-            <table cellpadding="0" cellspacing="0">
-              <tr><td style="padding:4px 0;font-size:13px;color:#cbd5e1;">📥 <strong style='color:#fff;'>Inbox</strong> — read &amp; reply to every customer chat</td></tr>
-              <tr><td style="padding:4px 0;font-size:13px;color:#cbd5e1;">📊 <strong style='color:#fff;'>Analytics</strong> — message volume, response times, sentiment</td></tr>
-              <tr><td style="padding:4px 0;font-size:13px;color:#cbd5e1;">🤖 <strong style='color:#fff;'>AI Controls</strong> — toggle AI, enable Manglish mode</td></tr>
-              <tr><td style="padding:4px 0;font-size:13px;color:#cbd5e1;">📚 <strong style='color:#fff;'>Knowledge Base</strong> — upload FAQs to train your AI</td></tr>
-            </table>''')}
-        """
-
-        html_body = self._wrap("Dashboard Access", body,
-                               "You received this because your Bijou AI dashboard access was granted.")
-
-        return self.send_email(to, subject, html_body)
 
     def send_login_magic_link(
         self,
@@ -662,43 +535,162 @@ class EmailService:
             True if sent successfully.
         """
         subject = "Your Bijou AI Login Link"
-        first = business_name.split()[0] if business_name else "there"
 
-        body = f"""
-            <div style="text-align:center;margin-bottom:28px;">
-              <div style="display:inline-block;background:linear-gradient(135deg,#0B3B2E,#0E4938);border-radius:20px;width:72px;height:72px;text-align:center;line-height:72px;font-size:36px;box-shadow:0 8px 32px rgba(227,180,87,0.35);">🔐</div>
-            </div>
-
-            <h2 style="margin:0 0 8px;font-size:24px;font-weight:900;color:#fff;text-align:center;">Log in to your dashboard</h2>
-            <p style="margin:0 0 28px;font-size:15px;color:#94a3b8;line-height:1.7;text-align:center;">
-              Hi <strong style="color:#e2e8f0;">{first}</strong>, click the button below to securely access your Bijou AI dashboard.
-              No password needed.
-            </p>
-
-            {self._cta(magic_link_url, "Log In to My Dashboard →")}
-
-            {self._card(f'''
-            <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">Link not working? Paste this into your browser</p>
-            <p style="margin:0;font-size:11px;color:#E3B457;word-break:break-all;">{magic_link_url}</p>''', bg="#0a1f19")}
-
-            {self._card('''
-            <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">Security reminder</p>
-            <p style="margin:0;font-size:13px;color:#cbd5e1;">This link expires in <strong style="color:#f59e0b;">24 hours</strong> and can only be used once.
-            If you did not request this, you can safely ignore this email.</p>''', border_color="#78350f", bg="#1c1007")}
-        """
-
-        html_body = self._wrap(
-            "Bijou AI Login",
-            body,
-            "You received this because a login was requested for your Bijou AI account.",
+        # Delegate to the Signal Gem builder.
+        html_body = _build_magic_link_login(
+            name=business_name,
+            magic_url=magic_link_url,
+            expiry_mins=15,
+            ip_hint=None,
+            device_hint=None,
         )
+
         text_body = (
             f"Log in to your Bijou AI dashboard\n\n"
-            f"Hi {first},\n\n"
-            f"Click the link below to access your dashboard:\n{magic_link_url}\n\n"
-            f"This link expires in 24 hours. If you did not request this, ignore this email."
+            f"Hi {business_name}, click the link below to access your dashboard:\n"
+            f"{magic_link_url}\n\n"
+            f"This link expires in 15 minutes. If you did not request this, ignore this email."
+        )
+
+        return self.send_email(to, subject, html_body, text_body)
+
+
+    def send_internal_signup_notification(
+        self,
+        name: str,
+        email: str,
+        phone: Optional[str] = None,
+        company: Optional[str] = None,
+        industry: Optional[str] = None,
+        source: Optional[str] = None,
+        plan: Optional[str] = None,
+    ) -> bool:
+        """
+        Send an internal 'new signup' notification to EMAIL_NOTIFY.
+
+        Wraps the Signal Gem internal-signup template (the one with
+        WhatsApp + Supabase quick-actions). Use this instead of
+        send_internal_notification() for new signup events specifically.
+
+        Args:
+            name:    Sign-up's full name.
+            email:   Sign-up's email address.
+            phone:   Optional phone (E.164 or local).
+            company: Optional company / business name.
+            industry:Optional industry / vertical.
+            source:  Optional acquisition source (e.g. 'organic', 'meta-ads').
+            plan:    Optional plan chosen at signup (e.g. 'Starter', 'Pro').
+
+        Returns:
+            True if sent, False if EMAIL_NOTIFY not configured or send fails.
+        """
+        if not self.notify_address:
+            logger.debug("EMAIL_NOTIFY not set — skipping internal signup notification")
+            return False
+
+        subject = f"🎯 New Bijou signup: {name} ({email})"
+        html_body = _build_internal_signup_notify(
+            name=name,
+            email=email,
+            phone=phone,
+            company=company,
+            industry=industry,
+            source=source,
+            plan=plan,
+        )
+        return self.send_email(self.notify_address, subject, html_body)
+
+    def send_settings_test_email(
+        self,
+        to: str,
+        name: str,
+        smtp_host: str = None,
+        email_from: str = None,
+    ) -> bool:
+        """
+        Send a "test SMTP configuration" email from the Settings page.
+
+        Delegates to the Signal Gem builder so the test message looks the
+        same as a real Bijou AI email (helps the user verify their config
+        end-to-end rather than just a generic "OK" message).
+
+        Args:
+            to:         Recipient email address.
+            name:       User's display name.
+            smtp_host:  Optional SMTP host string (e.g. 'smtp.resend.com').
+            email_from: Optional From address used in the test send.
+
+        Returns:
+            True if sent, False on send failure.
+        """
+        subject = "\U0001f9ea Test email from Bijou AI settings"
+        html_body = _build_settings_test_email(
+            name=name,
+            smtp_host=smtp_host,
+            email_from=email_from,
+        )
+        text_body = (
+            f"Hi {name}, this is a test email from your Bijou AI settings page. "
+            f"If you received this, your email configuration is working."
         )
         return self.send_email(to, subject, html_body, text_body)
+
+    def send_escalation_agent_notification(
+        self,
+        agent_name: str,
+        customer_name: str,
+        customer_phone: str,
+        issue: str,
+        escalation_id: str,
+        chat_snippet: list = None,
+        priority: str = "high",
+        response_url: str = None,
+    ) -> bool:
+        """
+        Send an escalation alert to the assigned human agent.
+
+        Delegates to the Signal Gem escalation template so the agent gets
+        a consistent, brand-correct alert (priority badge, customer contact,
+        chat snippet, one-tap "Open chat" link).
+
+        Args:
+            agent_name:     Display name of the on-call agent.
+            customer_name:  Customer's display name.
+            customer_phone: Customer's phone (E.164).
+            issue:          Short one-line issue description.
+            escalation_id:  Escalation record id (used in response_url).
+            chat_snippet:   Optional list of recent chat lines.
+            priority:       'low' | 'normal' | 'high' | 'urgent' (default 'high').
+            response_url:   Optional dashboard URL to open the chat directly.
+
+        Returns:
+            True if sent, False on send failure.
+        """
+        subject = f"\U0001f6a8 [{priority.upper()}] Bijou escalation \u2014 {customer_name}"
+        html_body = _build_escalation_agent_notification(
+            agent_name=agent_name,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            issue=issue,
+            escalation_id=escalation_id,
+            chat_snippet=chat_snippet,
+            priority=priority,
+            response_url=response_url,
+        )
+        return self.send_email(self.notify_address, subject, html_body)
+
+    # ------------------------------------------------------------------
+    # Backwards-compatible aliases (legacy callers / smoke tests)
+    # ------------------------------------------------------------------
+    def send_escalation_alert(self, *args, **kwargs):
+        """Alias for send_escalation_agent_notification (legacy callers)."""
+        return self.send_escalation_agent_notification(*args, **kwargs)
+
+    def send_settings_test(self, to, name, smtp_host=None, email_from=None):
+        """Alias for send_settings_test_email (legacy callers)."""
+        return self.send_settings_test_email(
+            to=to, name=name, smtp_host=smtp_host, email_from=email_from,
+        )
 
     def send_internal_notification(
         self,
