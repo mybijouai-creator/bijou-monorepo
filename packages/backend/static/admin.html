@@ -137,10 +137,29 @@
 
       function readSession() {
         try {
-          const sessionRaw = localStorage.getItem("sb_session") || localStorage.getItem("supabase.auth.token");
-          if (sessionRaw) {
-            const s = JSON.parse(sessionRaw);
-            return s?.access_token ? s : null;
+          // supabase-js v1 key (legacy)
+          const v1 = localStorage.getItem("sb_session") || localStorage.getItem("supabase.auth.token");
+          if (v1) {
+            const s = JSON.parse(v1);
+            if (s?.access_token) return s;
+          }
+          // supabase-js v2 default key (sb-<projectRef>-auth-token)
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && /^sb-.*-auth-token$/.test(k)) {
+              const s = JSON.parse(localStorage.getItem(k) || "{}");
+              if (s?.access_token) return s;
+            }
+          }
+          // Bijou dashboard's custom flat keys
+          const at = localStorage.getItem("access_token");
+          if (at) {
+            return {
+              access_token: at,
+              refresh_token: localStorage.getItem("refresh_token") || null,
+              expires_at: null,
+              user: null,
+            };
           }
         } catch {}
         return null;
@@ -753,12 +772,31 @@
           );
         }
         if (!me.is_platform_admin) {
+          const userId = me.user_id || "";
+          const userEmail = me.email || "";
+          const insertSql = userId && userEmail
+            ? `insert into public.platform_admins (user_id, email) values ('${userId}', '${userEmail}');`
+            : `-- Open the Supabase SQL editor and run:\n--   1) SELECT id, email FROM auth.users WHERE email = '<your-email>';\n--   2) Then insert the returned id:\n--      insert into public.platform_admins (user_id, email)\n--      values ('<id-from-step-1>', '<your-email>');`;
           return (
             <div className="p-8">
               <div className="card p-6 max-w-2xl mx-auto">
                 <div className="text-lg font-semibold text-[color:var(--premium)] mb-2">403 — not a platform admin</div>
-                <div className="text-sm text-[color:var(--text-mid)] mb-3">You're signed in as <code>{me.email}</code> but you don't have a row in <code>public.platform_admins</code>.</div>
-                <div className="text-xs text-[color:var(--text-mid)]">To grant access, run in Supabase SQL editor:<br/><br/><code>insert into public.platform_admins (user_id, email) values ('{me.user_id}', '{me.email}');</code></div>
+                <div className="text-sm text-[color:var(--text-mid)] mb-3">
+                  You're signed in{userEmail ? <> as <code>{userEmail}</code></> : null} but you don't have a row in <code>public.platform_admins</code>.
+                </div>
+                <div className="text-xs text-[color:var(--text-mid)] mb-2">To grant access, run in Supabase SQL editor:</div>
+                <div className="relative">
+                  <pre className="text-xs bg-black/30 border border-[color:var(--border)] rounded p-3 overflow-x-auto"><code>{insertSql}</code></pre>
+                  <button
+                    className="btn btn-ghost text-xs absolute top-2 right-2"
+                    onClick={() => navigator.clipboard?.writeText(insertSql)}
+                    title="Copy SQL">
+                    ⧉ copy
+                  </button>
+                </div>
+                {me.warning && (
+                  <div className="text-xs text-[color:var(--premium)] mt-3">⚠ {me.warning}</div>
+                )}
               </div>
             </div>
           );
