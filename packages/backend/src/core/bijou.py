@@ -39,6 +39,20 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 
+# === Force supabase-py to use HTTP/1.1 ===
+# Supabase's PostgREST edge terminates HTTP/2 connections intermittently on
+# certain tables (verified on shared_context + inbox_copilot_events after a
+# 2026-08-24 migration). HTTP/1.1 is reliable. We monkey-patch the global
+# httpx.Client constructor so EVERY create_client() call across all 50+
+# modules gets an HTTP/1.1 client without per-module changes.
+import httpx as _httpx_global
+_orig_httpx_init = _httpx_global.Client.__init__
+def _patched_httpx_init(self, *args, **kwargs):
+    kwargs.setdefault("http2", False)
+    _orig_httpx_init(self, *args, **kwargs)
+_httpx_global.Client.__init__ = _patched_httpx_init
+# NOTE: do NOT del _orig_httpx_init — the patched function still references it.
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -514,20 +528,50 @@ if static_path.exists():
     logger.info(f"✅ Static files mounted from {static_path} (Cache-Control: no-store)")
 
 # Helper function to get Supabase client for FastAPI routes
+_supabase_client = None
+_supabase_lock = __import__("threading").Lock()
+
+
 def get_supabase():
     """
     Get Supabase client instance for API routes.
     Uses service role key to bypass RLS policies.
+
+    Cached as a module-level singleton: each `create_client(supabase, key)`
+    call opens a fresh httpx.Client + connection pool. The previous
+    implementation created a new client on every API call, which under
+    load caused `ConnectionTerminated` errors from PostgREST once the
+    pool got exhausted (observed on Bijou 2026-08-24: 50+ requests/min
+    crashed every 4th query). Returning the same client reuses the
+    underlying httpx connection pool.
+
+    **HTTP/1.1 forced** (not the default HTTP/2): Supabase's PostgREST
+    edge terminates HTTP/2 connections intermittently on certain tables
+    (reliably reproed on `shared_context` and `inbox_copilot_events` after
+    a recent migration). HTTP/1.1 is reliable. Cost: a small per-request
+    overhead, well under 10ms in our region.
+
+    If you need a fresh client (e.g. for tests that swap env vars),
+    call `create_client(...)` directly.
     """
-    from supabase import Client, create_client
+    global _supabase_client
+    with _supabase_lock:
+        if _supabase_client is None:
+            import httpx
+            from supabase import Client, create_client
 
-    supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
 
-    if not supabase_url or not supabase_key:
-        raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
+            if not supabase_url or not supabase_key:
+                raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
 
-    return create_client(supabase_url, supabase_key)
+            # Force HTTP/1.1 — see docstring for the PostgREST HTTP/2 issue
+            http1_httpx = httpx.Client(http2=False, timeout=30.0)
+            from supabase import ClientOptions as _SBCO  # type: ignore
+            opts = _SBCO(httpx_client=http1_httpx)
+            _supabase_client = create_client(supabase_url, supabase_key, options=opts)
+        return _supabase_client
 
 # Defer router includes to prevent import-time blocking
 def _include_routers():

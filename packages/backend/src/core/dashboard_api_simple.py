@@ -148,22 +148,39 @@ async def _send_dashboard_recovery_msg(tenant_id: str) -> None:
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-# Initialize Supabase client directly
+# Initialize Supabase client directly (singleton, see core/bijou.py for the why)
+_dashboard_supabase_client = None
+_dashboard_supabase_lock = __import__("threading").Lock()
+
+
 def get_supabase() -> Client:
-    """Get Supabase client from environment"""
-    supabase_url = os.getenv("SUPABASE_URL") or os.getenv(
-        "NEXT_PUBLIC_SUPABASE_URL", ""
-    ).strip('"')
-    supabase_key = (
-        os.getenv("SUPABASE_SERVICE_KEY")
-        or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip('"')
-        or os.getenv("SUPABASE_KEY")
-    )
+    """Get Supabase client from environment. Cached as a module-level
+    singleton to avoid the `create_client` per-call cost (which opens a
+    fresh httpx connection pool each time and led to `ConnectionTerminated`
+    errors under load). See core/bijou.py for the full rationale.
+    """
+    global _dashboard_supabase_client
+    with _dashboard_supabase_lock:
+        if _dashboard_supabase_client is None:
+            supabase_url = os.getenv("SUPABASE_URL") or os.getenv(
+                "NEXT_PUBLIC_SUPABASE_URL", ""
+            ).strip('"')
+            supabase_key = (
+                os.getenv("SUPABASE_SERVICE_KEY")
+                or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip('"')
+                or os.getenv("SUPABASE_KEY")
+            )
 
-    if not supabase_url or not supabase_key:
-        raise HTTPException(status_code=500, detail="Missing Supabase configuration")
+            if not supabase_url or not supabase_key:
+                raise HTTPException(status_code=500, detail="Missing Supabase configuration")
 
-    return create_client(supabase_url, supabase_key)
+            # Force HTTP/1.1 (Supabase PostgREST HTTP/2 drops certain tables)
+            import httpx
+            from supabase import ClientOptions as _SBCO  # type: ignore
+            http1_client = httpx.Client(http2=False, timeout=30.0)
+            opts = _SBCO(httpx_client=http1_client)
+            _dashboard_supabase_client = create_client(supabase_url, supabase_key, options=opts)
+        return _dashboard_supabase_client
 
 
 def format_phone_number(phone: str) -> str:

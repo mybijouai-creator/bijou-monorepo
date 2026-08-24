@@ -136,26 +136,45 @@ def _check_new_tables_exist() -> Dict[str, Any]:
     """The 4 tables shipped in this session must all exist with RLS on.
     If any are missing, the corresponding feature silently breaks (the
     API returns 500 because the table is missing).
+
+    Uses direct PostgREST (httpx) rather than supabase-py because some
+    recently-migrated tables (`shared_context`, `inbox_copilot_events`)
+    intermittently return `ConnectionTerminated` via supabase-py even
+    when direct PostgREST works fine. We retry up to 3x with backoff
+    to absorb transient drops.
     """
-    from supabase import create_client
+    import httpx
+    import time
 
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    sb = create_client(url, key)
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_KEY not set")
+
     expected = [
         ("message_reasons", "EU AI Act Article 13 traceability"),
         ("shared_context", "A2A cross-channel seam (issue #23)"),
         ("inbox_copilot_events", "Inbox Co-pilot audit log (issue #13)"),
         ("data_request_deletions", "PDPA/GDPR right-to-erasure (issue #26)"),
     ]
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     missing = []
     for table, purpose in expected:
-        try:
-            # limit 0 + a select that doesn't reference any columns
-            # to confirm the table exists without needing schema
-            sb.table(table).select("id", count="exact").limit(0).execute()
-        except Exception as e:
-            missing.append(f"{table} ({type(e).__name__})")
+        ok = False
+        last_err = None
+        for attempt in range(3):
+            try:
+                with httpx.Client(http2=False, timeout=10) as c:
+                    r = c.get(f"{url}/rest/v1/{table}?select=id&limit=0", headers=headers)
+                    if r.status_code < 400:
+                        ok = True
+                        break
+                    last_err = f"HTTP {r.status_code}: {r.text[:200]}"
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {str(e)[:200]}"
+            time.sleep(0.5 * (attempt + 1))  # 0.5s, 1s, 1.5s backoff
+        if not ok:
+            missing.append(f"{table} ({last_err})")
     if missing:
         raise RuntimeError(f"missing tables: {', '.join(missing)}")
     return {"detail": f"all {len(expected)} present", "tables": [t[0] for t in expected]}
