@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # WARNING: DO NOT RUN `pip install -r requirements.txt` LOCALLY.
 # This file includes torch, CUDA, and ML packages (3+ GB download).
 #
@@ -12,6 +12,8 @@ uvicorn[standard]>=0.24.0
 
 # AI Models - Google Gemini (NEW SDK)
 google-genai>=1.56.0
+# LLM Observability (tracing, evals, prompt management)
+langfuse>=4.0.0
 
 # Database
 supabase>=2.3.0

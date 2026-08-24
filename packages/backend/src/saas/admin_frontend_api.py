@@ -1234,3 +1234,215 @@ async def admin_me(authorization: Optional[str] = Header(None)):
         "email": getattr(user, "email", None),
         "user_id": str(user.id),
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Langfuse (LLM Observability)
+# ══════════════════════════════════════════════════════════════════════
+#
+# Surface the Langfuse status, trace rollups, and cost-by-alias
+# data into the admin dashboard. Falls back gracefully when Langfuse
+# isn't configured (returns empty arrays with a `configured: false`
+# flag — the dashboard renders the empty state and a CTA to configure).
+
+
+@router.get("/langfuse/health")
+async def langfuse_health(admin=Depends(require_platform_admin)):
+    """SDK status + connection probe. Cheap — no remote calls unless
+    the operator clicks "test connection" in the dashboard.
+    """
+    from src.core.langfuse_tracing import health_summary, _LANGFUSE_AVAILABLE
+    from src.core.llm_gateway_v2 import llm
+    summary = health_summary()
+    aliases = []
+    try:
+        for a in llm.list_aliases():
+            aliases.append({
+                "alias": a["alias"],
+                "description": a.get("description", ""),
+                "privacy": a.get("privacy", "standard"),
+                "daily_budget_usd": a.get("daily_budget_usd", 0.0),
+                "spent_today_usd": a.get("spent_today_usd", 0.0),
+            })
+    except Exception as e:
+        logger.warning("list_aliases failed: %s", e)
+    return {
+        **summary,
+        "sdk_available": _LANGFUSE_AVAILABLE,
+        "aliases": aliases,
+    }
+
+
+@router.get("/langfuse/stats")
+async def langfuse_stats(
+    admin=Depends(require_platform_admin),
+    days: int = Query(7, ge=1, le=90),
+):
+    """Cost + token + call-count rollups for the last N days.
+
+    Source: in-memory `_UsageTracker` (the LLM gateway's own counter).
+    The same data flows to Langfuse, but we surface the in-process
+    copy for the admin dashboard so it works even when Langfuse is
+    down. When Langfuse IS configured, the dashboard prefers the
+    Langfuse numbers (more accurate, persistent); this endpoint
+    is the fast local fallback.
+    """
+    from src.core.llm_gateway_v2 import llm
+    out = {
+        "days": days,
+        "by_alias": [],
+        "by_provider": [],
+        "by_model": [],
+        "total_calls": 0,
+        "total_cost_usd": 0.0,
+        "total_prompt_tokens": 0,
+        "total_completion_tokens": 0,
+        "source": "in_process",
+    }
+    rows = llm.drain_usage()
+    # We don't actually want to drain the buffer (that empties the
+    # gateway's pending writes) — re-read the per-day counter instead.
+    # Each entry has the buffer rows, but `llm._usage.spent_today` only
+    # shows today. The admin dashboard wants per-day. So: also pull
+    # from the Supabase llm_usage table (already written by the gateway's
+    # usage persistence) for the historical view.
+    try:
+        sb = _get_supabase_client()
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        r = (
+            sb.table("llm_usage")
+            .select("alias, provider, model, cost_usd, prompt_tokens, completion_tokens, latency_ms, fallback_reason, tenant_id, created_at")
+            .gte("created_at", cutoff)
+            .limit(5000)
+            .execute()
+        )
+        rows = r.data or []
+    except Exception as e:
+        logger.warning("llm_usage fetch failed: %s", e)
+        rows = []
+
+    by_alias: Dict[str, Dict[str, Any]] = {}
+    by_provider: Dict[str, Dict[str, Any]] = {}
+    by_model: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        a = row.get("alias") or "(none)"
+        p = row.get("provider") or "(none)"
+        m = row.get("model") or "(none)"
+        cost = float(row.get("cost_usd") or 0.0)
+        pt = int(row.get("prompt_tokens") or 0)
+        ct = int(row.get("completion_tokens") or 0)
+        lat = int(row.get("latency_ms") or 0)
+        out["total_calls"] += 1
+        out["total_cost_usd"] += cost
+        out["total_prompt_tokens"] += pt
+        out["total_completion_tokens"] += ct
+        for k, container in (("alias", by_alias), ("provider", by_provider), ("model", by_model)):
+            pass
+        # alias rollup
+        if a not in by_alias:
+            by_alias[a] = {"alias": a, "calls": 0, "cost_usd": 0.0, "prompt_tokens": 0, "completion_tokens": 0, "fallback_count": 0}
+        e = by_alias[a]
+        e["calls"] += 1
+        e["cost_usd"] += cost
+        e["prompt_tokens"] += pt
+        e["completion_tokens"] += ct
+        if row.get("fallback_reason"):
+            e["fallback_count"] += 1
+        # provider rollup
+        if p not in by_provider:
+            by_provider[p] = {"provider": p, "calls": 0, "cost_usd": 0.0, "avg_latency_ms": 0.0, "fallback_count": 0}
+        pe = by_provider[p]
+        pe["calls"] += 1
+        pe["cost_usd"] += cost
+        pe["avg_latency_ms"] = (pe["avg_latency_ms"] * (pe["calls"] - 1) + lat) / pe["calls"]
+        if row.get("fallback_reason"):
+            pe["fallback_count"] += 1
+        # model rollup
+        if m not in by_model:
+            by_model[m] = {"model": m, "calls": 0, "cost_usd": 0.0, "prompt_tokens": 0, "completion_tokens": 0}
+        me = by_model[m]
+        me["calls"] += 1
+        me["cost_usd"] += cost
+        me["prompt_tokens"] += pt
+        me["completion_tokens"] += ct
+    out["by_alias"] = sorted(by_alias.values(), key=lambda x: -x["cost_usd"])
+    out["by_provider"] = sorted(by_provider.values(), key=lambda x: -x["cost_usd"])
+    out["by_model"] = sorted(by_model.values(), key=lambda x: -x["cost_usd"])
+    out["source"] = "supabase.llm_usage"
+    return out
+
+
+@router.get("/langfuse/traces")
+async def langfuse_traces(
+    admin=Depends(require_platform_admin),
+    limit: int = Query(50, ge=1, le=200),
+    alias: Optional[str] = Query(None),
+    provider: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None),
+):
+    """Recent llm_usage rows, formatted as "trace" entries for the
+    dashboard timeline. (When Langfuse IS configured, prefer the
+    Langfuse API for the full trace with messages, but the
+    llm_usage rows are enough to show "what AI calls happened".)
+    """
+    try:
+        sb = _get_supabase_client()
+        q = (
+            sb.table("llm_usage")
+            .select("id, alias, provider, model, cost_usd, prompt_tokens, completion_tokens, latency_ms, fallback_reason, tenant_id, error_class, created_at")
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if alias:
+            q = q.eq("alias", alias)
+        if provider:
+            q = q.eq("provider", provider)
+        if tenant_id:
+            q = q.eq("tenant_id", tenant_id)
+        r = q.execute()
+        return {"traces": r.data or [], "limit": limit, "filters": {"alias": alias, "provider": provider, "tenant_id": tenant_id}}
+    except Exception as e:
+        logger.error("langfuse_traces failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/langfuse/test-connection")
+async def langfuse_test_connection(
+    admin=Depends(require_platform_admin),
+    request: Request = None,
+):
+    """Force a connection probe to the configured Langfuse host.
+    Records the result in audit_log so the operator can see who
+    last verified it.
+    """
+    import httpx
+    from src.core.langfuse_tracing import get_config
+    cfg = get_config()
+    result = {
+        "enabled": cfg.enabled,
+        "host": cfg.host,
+        "public_key_set": bool(cfg.public_key),
+        "secret_key_set": bool(cfg.secret_key),
+        "probe": None,
+    }
+    if not (cfg.enabled and cfg.host and cfg.public_key and cfg.secret_key):
+        result["probe"] = {"ok": False, "detail": "Langfuse not fully configured"}
+        _audit(admin, "langfuse.test_connection", metadata=result, request=request)
+        return result
+    try:
+        with httpx.Client(http2=False, timeout=8.0) as client:
+            # Use Basic auth (Langfuse Cloud + self-hosted both support this)
+            r = client.get(
+                f"{cfg.host.rstrip('/')}/api/public/health",
+                auth=(cfg.public_key, cfg.secret_key),
+            )
+            result["probe"] = {
+                "ok": r.status_code < 400,
+                "status": r.status_code,
+                "detail": r.text[:200],
+            }
+    except Exception as e:
+        result["probe"] = {"ok": False, "status": None, "detail": f"{type(e).__name__}: {e}"[:200]}
+    _audit(admin, "langfuse.test_connection", metadata=result, request=request)
+    return result

@@ -60,6 +60,15 @@ services:
       CALCOM_CLIENT_SECRET: "${CALCOM_CLIENT_SECRET:-}"
       # Nango (integrations)
       NANGO_SECRET_KEY: "${NANGO_SECRET_KEY:-}"
+      # Langfuse (LLM observability — traces every ai:// call)
+      LANGFUSE_ENABLED: "${LANGFUSE_ENABLED:-false}"
+      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
+      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
+      LANGFUSE_HOST: "${LANGFUSE_HOST:-http://langfuse-web:3000}"
+      LANGFUSE_ENVIRONMENT: "${LANGFUSE_ENVIRONMENT:-production}"
+      LANGFUSE_SAMPLE_RATE: "${LANGFUSE_SAMPLE_RATE:-1.0}"
+      LANGFUSE_MASK_PII: "${LANGFUSE_MASK_PII:-true}"
+      LANGFUSE_RELEASE: "${LANGFUSE_RELEASE:-}"
       # Feature flags
       ENABLE_COMPOSIO: "false"
     volumes:
@@ -158,8 +167,118 @@ services:
       - backend
     profiles: ["voice"]  # only deploy with --profile voice
 
+  # ─── Langfuse (LLM observability — self-hosted) ────────────────────
+  # Langfuse v3 web + worker. Postgres + Clickhouse are the heavy stateful
+  # deps. In production these should be external managed services
+  # (Supabase, Neon, Clickhouse Cloud) — but for the initial Coolify
+  # self-hosted deploy we run them as sibling services.
+  #
+  # First-time setup: after the stack is up, open
+  #   https://<langfuse-domain>/auth/sign-up
+  # create the org + project, copy the public+secret keys, then set
+  # LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY on the backend env group.
+  langfuse-web:
+    image: langfuse/langfuse:3
+    container_name: bijou-langfuse-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *common-env
+      DATABASE_URL: "postgresql://langfuse:langfuse@langfuse-db:5432/langfuse"
+      CLICKHOUSE_URL: "http://langfuse-clickhouse:8123"
+      CLICKHOUSE_USER: "clickhouse"
+      CLICKHOUSE_PASSWORD: "clickhouse"
+      REDIS_URL: "redis://langfuse-redis:6379"
+      NEXTAUTH_SECRET: "${LANGFUSE_NEXTAUTH_SECRET:-please-change-me-in-prod-32chars}"
+      NEXTAUTH_URL: "${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}"
+      SALT: "${LANGFUSE_SALT:-please-change-me-in-prod}"
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      - langfuse-db
+      - langfuse-clickhouse
+      - langfuse-redis
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/public/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  langfuse-worker:
+    image: langfuse/langfuse:3
+    container_name: bijou-langfuse-worker
+    restart: unless-stopped
+    command: ["sh", "-c", "node ./worker.mjs"]
+    environment:
+      <<: *common-env
+      DATABASE_URL: "postgresql://langfuse:langfuse@langfuse-db:5432/langfuse"
+      CLICKHOUSE_URL: "http://langfuse-clickhouse:8123"
+      CLICKHOUSE_USER: "clickhouse"
+      CLICKHOUSE_PASSWORD: "clickhouse"
+      REDIS_URL: "redis://langfuse-redis:6379"
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      - langfuse-web
+
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: bijou-langfuse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: bijou-langfuse-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: bijou-langfuse-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - langfuse-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   backend-uploads:
     driver: local
   bridge-data:
+    driver: local
+  langfuse-db-data:
+    driver: local
+  langfuse-clickhouse-data:
+    driver: local
+  langfuse-redis-data:
     driver: local

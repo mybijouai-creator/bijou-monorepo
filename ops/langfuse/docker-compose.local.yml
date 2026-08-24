@@ -1,0 +1,170 @@
+# Local-only Langfuse stack for testing the LLM-gateway integration.
+#
+# Usage:
+#   docker compose -f ops/langfuse/docker-compose.local.yml up -d
+#   # wait ~30s for the web UI to come up
+#   open http://localhost:3000
+#   # sign up at /auth/sign-up, create org + project, copy public/secret keys
+#   # set them in .env as LANGFUSE_PUBLIC_KEY=... and LANGFUSE_SECRET_KEY=...
+#   # then set LANGFUSE_ENABLED=true and LANGFUSE_HOST=http://localhost:3000
+#   # restart the Bijou backend
+#
+# To stop and remove all data:
+#   docker compose -f ops/langfuse/docker-compose.local.yml down -v
+
+services:
+  langfuse-web:
+    image: langfuse/langfuse:3
+    container_name: bijou-langfuse-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "postgresql://langfuse:langfuse@langfuse-db:5432/langfuse"
+      CLICKHOUSE_URL: "http://langfuse-clickhouse:8123"
+      CLICKHOUSE_MIGRATION_URL: "clickhouse://clickhouse:clickhouse@langfuse-clickhouse:9000/langfuse"
+      CLICKHOUSE_USER: "clickhouse"
+      CLICKHOUSE_PASSWORD: "clickhouse"
+      CLICKHOUSE_CLUSTER_NAME: "default"
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_SSL: "false"
+      REDIS_URL: "redis://langfuse-redis:6379"
+      NEXTAUTH_SECRET: "dev-only-secret-please-change-in-prod-32c"
+      NEXTAUTH_URL: "http://localhost:3000"
+      SALT: "dev-only-salt-please-change-in-prod"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse-events"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: "us-east-1"
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "dev-access-key"
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "dev-secret-key"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://langfuse-minio:9000"
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/public/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Worker is opt-in (background jobs — not needed for trace ingestion).
+  # To start: docker compose -f ops/langfuse/docker-compose.local.yml --profile worker up -d
+  langfuse-worker:
+    image: langfuse/langfuse:3
+    container_name: bijou-langfuse-worker
+    restart: unless-stopped
+    command: ["sh", "-c", "node ./worker.mjs"]
+    environment:
+      DATABASE_URL: "postgresql://langfuse:langfuse@langfuse-db:5432/langfuse"
+      CLICKHOUSE_URL: "http://langfuse-clickhouse:8123"
+      CLICKHOUSE_USER: "clickhouse"
+      CLICKHOUSE_PASSWORD: "clickhouse"
+      REDIS_URL: "redis://langfuse-redis:6379"
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      langfuse-web:
+        condition: service_healthy
+    profiles: ["worker"]
+
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: bijou-langfuse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: bijou-langfuse-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    # Force IPv4 only — Docker Desktop on Windows has broken IPv6 in containers.
+    # Mount a config override that disables the default `[::]:8123` listener.
+    volumes:
+      - ./clickhouse-ipv4.xml:/etc/clickhouse-server/config.d/00-ipv4.xml:ro
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: bijou-langfuse-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - langfuse-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO — S3-compatible storage for event uploads (required by Langfuse v3)
+  langfuse-minio:
+    image: minio/minio:RELEASE.2024-08-17T01-24-54Z
+    container_name: bijou-langfuse-minio
+    restart: unless-stopped
+    command: ["minio", "server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: dev-access-key
+      MINIO_ROOT_PASSWORD: dev-secret-key
+    ports:
+      - "9001:9001"  # MinIO console
+    volumes:
+      - langfuse-minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Create the events bucket on MinIO startup
+  langfuse-minio-init:
+    image: minio/mc:RELEASE.2024-08-17T11-33-50Z
+    container_name: bijou-langfuse-minio-init
+    depends_on:
+      langfuse-minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        sleep 5;
+        mc alias set local http://langfuse-minio:9000 dev-access-key dev-secret-key;
+        mc mb local/langfuse-events || true;
+        exit 0;
+      "
+
+volumes:
+  langfuse-db-data:
+    driver: local
+  langfuse-clickhouse-data:
+    driver: local
+  langfuse-redis-data:
+    driver: local
+  langfuse-minio-data:
+    driver: local

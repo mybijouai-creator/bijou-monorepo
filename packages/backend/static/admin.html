@@ -198,6 +198,7 @@
         { id: "tenants",    label: "Tenants" },
         { id: "users",      label: "Users" },
         { id: "billing",    label: "Billing" },
+        { id: "langfuse",   label: "LLM Traces" },
         { id: "migrations", label: "Migrations" },
         { id: "keys",       label: "API Keys" },
         { id: "audit",      label: "Audit Log" },
@@ -681,6 +682,195 @@
         );
       }
 
+      // ─── Langfuse (LLM observability) ──────────────────────────────
+      // Renders: (1) Langfuse health + connection test, (2) per-alias
+      // cost + call counts, (3) per-provider latency + fallback rate,
+      // (4) recent llm_usage rows. All data is fetched from
+      // /admin/api/langfuse/* — the same data is also in Langfuse
+      // proper when LANGFUSE_HOST is set, but we read from Supabase
+      // so the dashboard works even when Langfuse itself is down.
+      function LangfusePage() {
+        const [health, setHealth] = useState(null);
+        const [stats, setStats]   = useState(null);
+        const [traces, setTraces] = useState(null);
+        const [err, setErr] = useState(null);
+        const [days, setDays] = useState(7);
+        const [testing, setTesting] = useState(false);
+        const [testResult, setTestResult] = useState(null);
+
+        const load = () => {
+          adminFetch("/langfuse/health").then(setHealth).catch(setErr);
+          adminFetch(`/langfuse/stats?days=${days}`).then(setStats).catch(setErr);
+          adminFetch("/langfuse/traces?limit=100").then(setTraces).catch(setErr);
+        };
+        useEffect(load, [days]);
+
+        const testConnection = () => {
+          setTesting(true); setTestResult(null);
+          adminFetch("/langfuse/test-connection", { method: "POST" })
+            .then((r) => { setTestResult(r); load(); })
+            .catch((e) => setTestResult({ probe: { ok: false, detail: e.message } }))
+            .finally(() => setTesting(false));
+        };
+
+        if (err) return <ErrorBox err={err} />;
+        if (!health || !stats || !traces) return <Loading />;
+
+        const cfgOk = health.configured && health.ready;
+        return (
+          <div className="space-y-3">
+            {/* Langfuse status banner */}
+            <div className={`card p-4 ${cfgOk ? "border-[color:var(--accent-hi)]" : ""}`}>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="text-lg font-semibold">Langfuse (LLM Observability)</div>
+                <Pill kind={cfgOk ? "ok" : (health.enabled ? "warn" : "mute")}>
+                  {cfgOk ? "ready" : (health.enabled ? "partial" : "disabled")}
+                </Pill>
+                {!health.sdk_available && <Pill kind="warn">SDK missing</Pill>}
+                <div className="ml-auto">
+                  <button className="btn btn-ghost text-xs" onClick={testConnection} disabled={testing || !health.enabled}>
+                    {testing ? "testing…" : "test connection"}
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                <div>
+                  <div className="text-[color:var(--text-mid)] text-xs">Host</div>
+                  <div className="font-mono text-xs">{health.host || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-[color:var(--text-mid)] text-xs">Public key</div>
+                  <div className="font-mono text-xs">{health.public_key_set ? "*** set" : "—"}</div>
+                </div>
+                <div>
+                  <div className="text-[color:var(--text-mid)] text-xs">Secret key</div>
+                  <div className="font-mono text-xs">{health.secret_key_set ? "*** set" : "—"}</div>
+                </div>
+                <div>
+                  <div className="text-[color:var(--text-mid)] text-xs">Environment</div>
+                  <div className="font-mono text-xs">{health.environment}</div>
+                </div>
+              </div>
+              {!cfgOk && (
+                <div className="mt-3 text-xs text-[color:var(--text-mid)]">
+                  Set <code>LANGFUSE_ENABLED=true</code> and the public/secret keys in <code>.env</code>, then restart the backend.
+                  See <code>ops/langfuse/README.md</code> for the self-hosted setup.
+                </div>
+              )}
+              {testResult && (
+                <div className={`mt-3 p-2 rounded text-xs ${testResult.probe?.ok ? "bg-[color:var(--surface-2)] text-[color:var(--accent-hi)]" : "bg-[color:var(--surface-2)] text-[color:var(--premium)]"}`}>
+                  {testResult.probe?.ok ? "✓ " : "✗ "}probe: {testResult.probe?.detail || JSON.stringify(testResult.probe)}
+                </div>
+              )}
+            </div>
+
+            {/* Aliases config summary */}
+            <div className="card p-4">
+              <div className="font-semibold mb-2">Configured aliases (LLM gateway)</div>
+              <table>
+                <thead><tr><th>Alias</th><th>Description</th><th>Privacy</th><th>Daily budget</th><th>Spent today</th></tr></thead>
+                <tbody>
+                  {(health.aliases || []).map((a) => (
+                    <tr key={a.alias}>
+                      <td><code>{a.alias}</code></td>
+                      <td className="text-xs text-[color:var(--text-mid)]">{a.description}</td>
+                      <td><Pill kind={a.privacy === "strict" ? "warn" : "mute"}>{a.privacy}</Pill></td>
+                      <td className="text-xs">${a.daily_budget_usd.toFixed(2)}</td>
+                      <td className="text-xs">${a.spent_today_usd.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                  {(!health.aliases || !health.aliases.length) && (
+                    <tr><td colSpan="5" className="text-center text-[color:var(--text-mid)] py-4">No aliases configured</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Stats: by alias / by provider / by model */}
+            <div className="card p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="font-semibold">Usage rollup</div>
+                <select className="input ml-auto text-xs w-32" value={days} onChange={(e) => setDays(parseInt(e.target.value))}>
+                  <option value="1">last 24h</option>
+                  <option value="7">last 7 days</option>
+                  <option value="30">last 30 days</option>
+                  <option value="90">last 90 days</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
+                <Metric label="Total calls" value={stats.total_calls.toLocaleString()} />
+                <Metric label="Total cost" value={`$${stats.total_cost_usd.toFixed(4)}`} />
+                <Metric label="Prompt tokens" value={stats.total_prompt_tokens.toLocaleString()} />
+                <Metric label="Completion tokens" value={stats.total_completion_tokens.toLocaleString()} />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <RollupTable title="By alias" rows={stats.by_alias} valueKey="alias" costKey="cost_usd" />
+                <RollupTable title="By provider" rows={stats.by_provider} valueKey="provider" costKey="cost_usd" extra={["avg_latency_ms", "fallback_count"]} />
+                <RollupTable title="By model" rows={stats.by_model} valueKey="model" costKey="cost_usd" />
+              </div>
+            </div>
+
+            {/* Recent traces */}
+            <div className="card p-4">
+              <div className="font-semibold mb-2">Recent LLM calls (last {traces.limit || 100})</div>
+              <div className="text-xs text-[color:var(--text-mid)] mb-2">Source: <code>supabase.{stats.source}</code> — refreshes every page load. The full traces (with prompt + completion) live in Langfuse when configured.</div>
+              <table>
+                <thead><tr><th>When</th><th>Alias</th><th>Provider</th><th>Model</th><th>Cost</th><th>Tokens (p/c)</th><th>Latency</th><th>Fallback</th></tr></thead>
+                <tbody>
+                  {(traces.traces || []).map((t) => (
+                    <tr key={t.id}>
+                      <td className="text-[color:var(--text-mid)] text-xs whitespace-nowrap">{new Date(t.created_at).toLocaleString()}</td>
+                      <td><code className="text-xs">{t.alias}</code></td>
+                      <td><Pill kind="mute">{t.provider}</Pill></td>
+                      <td className="text-xs">{t.model}</td>
+                      <td className="text-xs">${(t.cost_usd || 0).toFixed(5)}</td>
+                      <td className="text-xs text-[color:var(--text-mid)]">{t.prompt_tokens}/{t.completion_tokens}</td>
+                      <td className="text-xs">{t.latency_ms}ms</td>
+                      <td className="text-xs">{t.fallback_reason || "—"}</td>
+                    </tr>
+                  ))}
+                  {(!traces.traces || !traces.traces.length) && (
+                    <tr><td colSpan="8" className="text-center text-[color:var(--text-mid)] py-6">No LLM calls recorded yet. As soon as the gateway answers a chat, traces show up here.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      }
+
+      function Metric({ label, value }) {
+        return (
+          <div className="bg-[color:var(--surface-2)] rounded p-3">
+            <div className="text-xs text-[color:var(--text-mid)]">{label}</div>
+            <div className="text-lg font-mono">{value}</div>
+          </div>
+        );
+      }
+      function RollupTable({ title, rows, valueKey, costKey, extra = [] }) {
+        return (
+          <div>
+            <div className="text-xs text-[color:var(--text-mid)] mb-1">{title}</div>
+            <table>
+              <thead><tr><th>{title.replace("By ", "")}</th><th>Calls</th><th>$</th>{extra.map((e) => <th key={e}>{e.replace(/_/g, " ")}</th>)}</tr></thead>
+              <tbody>
+                {(rows || []).map((r) => (
+                  <tr key={r[valueKey]}>
+                    <td><code className="text-xs">{r[valueKey]}</code></td>
+                    <td className="text-xs">{r.calls.toLocaleString()}</td>
+                    <td className="text-xs">${r[costKey].toFixed(4)}</td>
+                    {extra.map((e) => <td key={e} className="text-xs text-[color:var(--text-mid)]">{typeof r[e] === "number" ? r[e].toFixed(1) : r[e]}</td>)}
+                  </tr>
+                ))}
+                {(!rows || !rows.length) && (
+                  <tr><td colSpan={3 + extra.length} className="text-center text-[color:var(--text-mid)] py-2 text-xs">none</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+
       function Loading() {
         return <div className="text-center text-[color:var(--text-mid)] py-8 text-sm">loading…</div>;
       }
@@ -754,6 +944,7 @@
           tenants:    <TenantsPage />,
           users:      <UsersPage />,
           billing:    <BillingPage />,
+          langfuse:   <LangfusePage />,
           migrations: <MigrationsPage />,
           keys:       <KeysPage />,
           audit:      <AuditPage />,

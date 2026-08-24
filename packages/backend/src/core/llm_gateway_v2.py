@@ -613,100 +613,150 @@ class LLMGateway:
         last_fallback_reason: Optional[str] = None
         started = time.monotonic()
         tenant_id = opts.get("tenant_id")
-        for idx, entry in enumerate(chain):
-            provider_name = entry.get("provider")
-            model = entry.get("model")
-            entry_opts = dict(entry)
-            entry_opts.update({k: v for k, v in opts.items() if k in ("temperature", "max_output_tokens", "tools")})
+        # Langfuse: open one generation observation per complete() call, update as we
+        # move through the provider chain. The observation records the alias, the
+        # resolved provider+model, tokens, cost, and latency. PDPA-grade inputs
+        # are masked inside trace_completion.
+        from src.core.langfuse_tracing import trace_completion, flush as _lf_flush
 
-            # Privacy gate — strict aliases cannot use multi-tenant aggregators.
-            if privacy == "strict" and provider_name not in STRICT_PRIVACY_PROVIDERS:
-                logger.info(
-                    "🚫 alias=%s skipping provider=%s (privacy=strict)",
-                    alias,
-                    provider_name,
-                )
-                continue
+        with trace_completion(
+            alias=alias,
+            model="chain",  # will be updated to the actual resolved model below
+            provider="chain",
+            messages=messages,
+            tenant_id=tenant_id,
+            session_id=opts.get("session_id"),
+            user_id=opts.get("user_id"),
+            metadata={
+                "privacy": privacy,
+                "daily_budget_usd": budget,
+                "chain_len": len(chain),
+            },
+            tags=[alias, privacy] if privacy else [alias],
+        ) as _lf_obs:
+            for idx, entry in enumerate(chain):
+                provider_name = entry.get("provider")
+                model = entry.get("model")
+                entry_opts = dict(entry)
+                entry_opts.update({k: v for k, v in opts.items() if k in ("temperature", "max_output_tokens", "tools")})
 
-            try:
-                text, raw, pt, ct, used_model, function_calls = self._dispatch(
-                    provider_name, model, messages, entry_opts
-                )
-            except ProviderError as e:
-                last_err = e
-                if e.status_code in FALLBACK_STATUS_CODES:
-                    last_fallback_reason = (
-                        f"http_{e.status_code}" if e.status_code else "transport_error"
-                    )
-                    logger.warning(
-                        "⚠️ alias=%s provider=%s model=%s → %s (falling back)",
+                # Privacy gate — strict aliases cannot use multi-tenant aggregators.
+                if privacy == "strict" and provider_name not in STRICT_PRIVACY_PROVIDERS:
+                    logger.info(
+                        "🚫 alias=%s skipping provider=%s (privacy=strict)",
                         alias,
                         provider_name,
-                        model,
-                        last_fallback_reason,
                     )
                     continue
-                # Permanent error — don't try the next provider.
-                raise
 
-            # ---- success ----
+                try:
+                    text, raw, pt, ct, used_model, function_calls = self._dispatch(
+                        provider_name, model, messages, entry_opts
+                    )
+                except ProviderError as e:
+                    last_err = e
+                    if e.status_code in FALLBACK_STATUS_CODES:
+                        last_fallback_reason = (
+                            f"http_{e.status_code}" if e.status_code else "transport_error"
+                        )
+                        logger.warning(
+                            "⚠️ alias=%s provider=%s model=%s → %s (falling back)",
+                            alias,
+                            provider_name,
+                            model,
+                            last_fallback_reason,
+                        )
+                        continue
+                    # Permanent error — don't try the next provider.
+                    try:
+                        _lf_obs.fail(str(e))
+                    except Exception:
+                        pass
+                    raise
+
+                # ---- success ----
+                latency_ms = int((time.monotonic() - started) * 1000)
+                cost = self._estimate_cost(model, pt, ct)
+                self._usage.record(
+                    alias=alias,
+                    cost_usd=cost,
+                    provider=provider_name,
+                    model=used_model,
+                    latency_ms=latency_ms,
+                    prompt_tokens=pt,
+                    completion_tokens=ct,
+                    fallback_reason=last_fallback_reason if idx > 0 else None,
+                    tenant_id=tenant_id,
+                )
+                # Langfuse: update the observation with the resolved provider/model,
+                # the output, the token usage, and the cost.
+                try:
+                    _lf_obs.update(
+                        model=used_model,
+                        provider=provider_name,
+                        output=text,
+                        usage={"prompt_tokens": pt, "completion_tokens": ct},
+                        cost_usd=cost,
+                        metadata={
+                            "fallback_reason": last_fallback_reason,
+                            "latency_ms": latency_ms,
+                        },
+                    )
+                except Exception as _lf_err:
+                    logger.debug("Langfuse obs.update failed: %s", _lf_err)
+                logger.info(
+                    "✅ alias=%s provider=%s model=%s latency_ms=%d pt=%d ct=%d "
+                    "cost_usd=%.5f fallback=%s",
+                    alias,
+                    provider_name,
+                    used_model,
+                    latency_ms,
+                    pt,
+                    ct,
+                    cost,
+                    last_fallback_reason or "primary",
+                )
+                return CompletionResult(
+                    text=text,
+                    provider=provider_name,
+                    model=used_model,
+                    alias=alias,
+                    fallback_reason=last_fallback_reason if idx > 0 else None,
+                    prompt_tokens=pt,
+                    completion_tokens=ct,
+                    cost_usd=cost,
+                    latency_ms=latency_ms,
+                    function_calls=function_calls,
+                    raw=raw,
+                )
+
+            # Every provider in the chain failed.
             latency_ms = int((time.monotonic() - started) * 1000)
-            cost = self._estimate_cost(model, pt, ct)
+            # Log the failure even though we didn't reach a result.
             self._usage.record(
                 alias=alias,
-                cost_usd=cost,
-                provider=provider_name,
-                model=used_model,
+                cost_usd=0.0,
+                provider="(none)",
+                model="(none)",
                 latency_ms=latency_ms,
-                prompt_tokens=pt,
-                completion_tokens=ct,
-                fallback_reason=last_fallback_reason if idx > 0 else None,
+                fallback_reason=last_fallback_reason or "all_providers_failed",
+                error_class=type(last_err).__name__ if last_err else "NoProviderAvailable",
                 tenant_id=tenant_id,
             )
-            logger.info(
-                "✅ alias=%s provider=%s model=%s latency_ms=%d pt=%d ct=%d "
-                "cost_usd=%.5f fallback=%s",
-                alias,
-                provider_name,
-                used_model,
-                latency_ms,
-                pt,
-                ct,
-                cost,
-                last_fallback_reason or "primary",
+            err_msg = (
+                f"all {len(chain)} providers failed"
+                if last_err is None
+                else f"{type(last_err).__name__}: {last_err}"
             )
-            return CompletionResult(
-                text=text,
-                provider=provider_name,
-                model=used_model,
-                alias=alias,
-                fallback_reason=last_fallback_reason if idx > 0 else None,
-                prompt_tokens=pt,
-                completion_tokens=ct,
-                cost_usd=cost,
-                latency_ms=latency_ms,
-                function_calls=function_calls,
-                raw=raw,
+            try:
+                _lf_obs.fail(err_msg)
+            except Exception:
+                pass
+            if last_err is not None:
+                raise last_err
+            raise NoProviderAvailable(
+                f"Alias {alias!r}: no usable provider (all filtered or missing keys)"
             )
-
-        # Every provider in the chain failed.
-        latency_ms = int((time.monotonic() - started) * 1000)
-        # Log the failure even though we didn't reach a result.
-        self._usage.record(
-            alias=alias,
-            cost_usd=0.0,
-            provider="(none)",
-            model="(none)",
-            latency_ms=latency_ms,
-            fallback_reason=last_fallback_reason or "all_providers_failed",
-            error_class=type(last_err).__name__ if last_err else "NoProviderAvailable",
-            tenant_id=tenant_id,
-        )
-        if last_err is not None:
-            raise last_err
-        raise NoProviderAvailable(
-            f"Alias {alias!r}: no usable provider (all filtered or missing keys)"
-        )
 
     # ---- internals -------------------------------------------------------
 
