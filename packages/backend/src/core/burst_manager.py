@@ -17,8 +17,14 @@ from typing import List
 BREAK_TOKEN = "[BREAK]"
 
 # Absolute limits
-MAX_BURSTS = 4  # Never send more than 4 messages (increased from 3 for [BREAK] support)
-MIN_CHUNK_CHARS = 10  # Don't send tiny fragments
+# 2026-08-24: Tightened from 4 → 2 to stop the "3-7 tiny messages" problem.
+# Real human WhatsApp agents almost never send more than 2 bubbles for one
+# reply. If the customer types 3 quick messages, we still send ONE combined
+# reply (the response_coordinator handles that consolidation BEFORE we
+# even get to this layer). If the LLM really needs to break into 2 bubbles
+# (e.g. answering two distinct questions), it can use [BREAK] explicitly.
+MAX_BURSTS = 2
+MIN_CHUNK_CHARS = 20  # Don't send tiny fragments — fold them into the previous bubble
 
 
 def split_into_bursts(text: str, max_chunk_chars: int = 1000) -> List[str]:

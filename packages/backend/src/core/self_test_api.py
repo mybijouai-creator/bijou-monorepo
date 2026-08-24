@@ -275,6 +275,50 @@ def _check_disk_space() -> Dict[str, Any]:
     return {"detail": f"{free_gb:.1f} GB free"}
 
 
+def _check_response_coordinator() -> Dict[str, Any]:
+    """
+    2026-08-24: Verify the ResponseCoordinator is wired and report its
+    runtime stats. Not critical (the system degrades to immediate-reply
+    if the coordinator isn't available) but the Health tab shows this so
+    the owner can see debounce/consolidation actually happening.
+
+    Implementation note: we read the coordinator via the module-level
+    singleton accessor `get_coordinator()` from `response_coordinator.py`,
+    NOT via the `bijou_instance` global. Reason: the server is launched
+    as `python src/core/bijou.py` which makes Python load the file under
+    the special name `__main__`. The `bijou_instance = BijouAI()`
+    assignment therefore lives in the `__main__` module's namespace,
+    not in `src.core.bijou`'s namespace. A bare `import src.core.bijou`
+    from the self_test_api gives a DIFFERENT module instance with a
+    fresh `bijou_instance = None`. Using the coordinator's own singleton
+    sidesteps the whole issue.
+    """
+    coord = None
+    debug = []
+    try:
+        from src.core.response_coordinator import get_coordinator
+        coord = get_coordinator()
+        debug.append(f"coordinator_id={id(coord)}")
+    except Exception as e:
+        debug.append(f"err={type(e).__name__}: {e}")
+
+    if coord is None:
+        return {"detail": f"coordinator not available — {' | '.join(debug)}"}
+
+    stats = coord.stats()
+    return {
+        "detail": (
+            f"enqueued={stats['enqueued']} flushed={stats['flushed']} "
+            f"consolidated={stats['consolidated']} "
+            f"pending={stats['pending_chats']} chat(s)/{stats['pending_messages']} msg(s) "
+            f"quiet={stats['config']['quiet_window_seconds']}s "
+            f"max_wait={stats['config']['max_wait_seconds']}s "
+            f"max_bubbles={stats['config']['max_outbound_bubbles']}"
+        ),
+        "stats": stats,
+    }
+
+
 # ─── Orchestrator ──────────────────────────────────────────────────────
 
 
@@ -286,6 +330,10 @@ async def run_self_test() -> Dict[str, Any]:
     """
     started = time.monotonic()
     checks: List[Dict[str, Any]] = []
+
+    # 2026-08-24: Response Coordinator (debounce + consolidation) — wired
+    # in below; helper is a top-level so the test can find it via name.
+    # (See _check_response_coordinator further down.)
 
     # Critical: Supabase. Without it, the API is 100% broken.
     checks.append(await _timed("supabase_connectivity", _check_supabase_connectivity, critical=True))
@@ -315,6 +363,12 @@ async def run_self_test() -> Dict[str, Any]:
 
     # Non-critical: disk space.
     checks.append(await _timed("disk_space", _check_disk_space, critical=False))
+
+    # 2026-08-24: Response Coordinator — debounce + consolidation for human-style
+    # replies. Not critical (the system falls back to immediate-reply if the
+    # coordinator isn't wired) but useful to surface in the health tab so the
+    # owner can see "3 messages consolidated → 1 reply" in action.
+    checks.append(await _timed("response_coordinator", _check_response_coordinator, critical=False))
 
     # Apply any `status_override` from the check (e.g. warn on low disk)
     for c in checks:

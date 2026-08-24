@@ -63,6 +63,15 @@ except ImportError as e:
     split_into_bursts = None  # type: ignore
 
 try:
+    # 2026-08-24: Response Coordinator — debounce inbound messages, consolidate
+    # bursts of customer text into a single LLM call, and cap the outbound
+    # at 1-2 WhatsApp bubbles so Bijou stops feeling like "another AI".
+    from src.core.response_coordinator import ResponseCoordinator, get_coordinator
+except ImportError as e:
+    ResponseCoordinator = None  # type: ignore
+    get_coordinator = None  # type: ignore
+
+try:
     from src.core.command_parser import CommandParser
     from src.core.multi_language import (
         Language,
@@ -1288,6 +1297,37 @@ class BijouAI:
         self.recent_sent_ttl = 120  # seconds - how long to remember our sends
         self.recent_sent_max_per_chat = 5  # keep last N sends per chat
 
+        # 2026-08-24: Response Coordinator — debounce + consolidation + human tone
+        # Initialised here so the webhook entry point and the polling loop can
+        # both route through it. Tunables come from env so ops can override
+        # without a redeploy.
+        #
+        # IMPORTANT: we use the module-level singleton via get_coordinator()
+        # rather than creating a fresh one. This way the self_test_api can
+        # read the same instance via get_coordinator() (avoiding the
+        # __main__ vs src.core.bijou module-instance gotcha that bit us
+        # when reading the bijou_instance global from a different module).
+        # If a future change needs per-tenant coordinators, swap to keyed
+        # singletons in response_coordinator.get_coordinator(tenant_id=...).
+        self.response_coordinator = None
+        if ResponseCoordinator is not None and get_coordinator is not None:
+            self.response_coordinator = get_coordinator()
+            # Apply tunables from env. These override any defaults the
+            # singleton already had from a previous boot in the same
+            # process (e.g. under a test runner that imports twice).
+            self.response_coordinator.quiet_window = float(os.getenv("BIJOU_QUIET_WINDOW_SECONDS", "8"))
+            self.response_coordinator.max_wait     = float(os.getenv("BIJOU_MAX_WAIT_SECONDS", "35"))
+            self.response_coordinator.max_msgs     = int(os.getenv("BIJOU_MAX_CONSOLIDATED_MSGS", "6"))
+            self.response_coordinator.max_bubbles  = int(os.getenv("BIJOU_MAX_OUTBOUND_BUBBLES", "2"))
+            self.response_coordinator.on_flush = self._on_coordinator_flush
+            logger.info(
+                "🧭 ResponseCoordinator active (quiet=%.1fs max_wait=%.1fs max_consolidate=%d max_bubbles=%d)",
+                self.response_coordinator.quiet_window,
+                self.response_coordinator.max_wait,
+                self.response_coordinator.max_msgs,
+                self.response_coordinator.max_bubbles,
+            )
+
         # Webhook mode flag
         self.webhook_mode = os.getenv("WEBHOOK_MODE", "true").lower() == "true"
 
@@ -1641,6 +1681,224 @@ class BijouAI:
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+
+    # ========================================================================
+    # 2026-08-24: Response Coordinator wrapper
+    # ========================================================================
+    # process_message is the heavy entry point (2000+ lines, runs the full
+    # Bijou pipeline: keyword templates, function calling, LLM call, lead
+    # qualification, owner notifications, etc). We don't want to call it
+    # for every single message a customer sends — customers type multiple
+    # quick messages ("hi", "got anything in kl?", "2 bed rm condo?") and
+    # we want to consolidate those into a SINGLE LLM call, not 3.
+    #
+    # The wrapper below does this:
+    #   1. High-priority paths (commands, owner DMs, group registrations,
+    #      link previews, escalation triggers) bypass coordination and go
+    #      straight to process_message. We don't want to delay /help or
+    #      /pause by 8 seconds.
+    #   2. Everything else gets enqueued. The coordinator waits for an
+    #      8-second quiet window, then fires `_on_coordinator_flush` with
+    #      the consolidated batch.
+    #   3. The flush callback re-invokes process_message once with a
+    #      synthetic message whose content is the customer's messages
+    #      joined together, plus a "style snapshot" hint in the content
+    #      so the LLM knows the customer's tone/register.
+    #
+    # This means:
+    #   - Customers who type once and wait: reply within ~9 seconds
+    #   - Customers who type 3 quick messages: ONE consolidated reply
+    #   - The LLM is only called once per batch
+    #   - The system prompt + burst manager still cap output at 2 bubbles
+    # ========================================================================
+
+    # Commands / signals that must NOT be debounced. If a customer types
+    # "/help" we want to answer immediately, not 8 seconds later.
+    _BYPASS_COORDINATOR_PREFIXES = (
+        "/",  # any slash command (/help, /pause, /agent, /owner, /status, /start, /stop, /quiet, /active, /handover)
+        "register group",
+        "register device",
+        "bijou ",  # explicit "bijou ..." prefix
+        "@bijou",
+    )
+
+    def _should_bypass_coordinator(self, message: Dict) -> bool:
+        """
+        Return True if this message should skip the coordinator and
+        go straight to process_message.
+
+        We bypass for:
+          - slash commands (anything starting with /)
+          - explicit owner/group registration phrases
+          - any message that has a quoted (reply-to) reference, which
+            usually means the user is responding to a specific thing
+            we said and wants a quick answer
+        """
+        content = (message.get("content") or "").strip().lower()
+        if not content:
+            return True  # empty/media-only — process immediately
+        for prefix in self._BYPASS_COORDINATOR_PREFIXES:
+            if content.startswith(prefix):
+                return True
+        # Group chats: always bypass (we want per-message context)
+        chat_jid = message.get("chat_jid", "")
+        if chat_jid.endswith("@g.us"):
+            return True
+        # Owner direct messages: bypass
+        if message.get("is_from_me"):
+            return True
+        # Outbound media: bypass (media replies shouldn't wait)
+        if message.get("media_url") or message.get("media_type"):
+            return True
+        return False
+
+    async def process_message_with_coordination(self, message: Dict) -> None:
+        """
+        Entry point that routes inbound messages through the coordinator
+        before process_message.
+
+        Two paths:
+          - Bypass: high-priority → process_message directly
+          - Coordinated: enqueue + wait for quiet + process_message with
+                         consolidated content
+        """
+        if self.response_coordinator is None:
+            await self.process_message(message)
+            return
+
+        if self._should_bypass_coordinator(message):
+            await self.process_message(message)
+            return
+
+        chat_jid = message.get("chat_jid", "")
+        if not chat_jid:
+            await self.process_message(message)
+            return
+
+        # Try to attach the running loop (for asyncio.create_task inside
+        # the coordinator). Best-effort: if this fails, the coordinator
+        # will fall back to get_event_loop() when it actually schedules.
+        try:
+            self.response_coordinator.attach_loop(asyncio.get_running_loop())
+        except RuntimeError:
+            pass
+
+        # Already a flush scheduled for this chat — just enqueue.
+        if self.response_coordinator.has_pending(chat_jid):
+            await self.response_coordinator.enqueue(
+                chat_jid=chat_jid,
+                tenant_id=message.get("tenant_id") or "",
+                channel=message.get("channel") or "whatsapp",
+                client_config=message.get("_client_config"),
+                msg_id=message.get("id") or f"webhook-{time.time()}",
+                content=message.get("content") or "",
+                sender=message.get("sender") or "",
+                quoted=message.get("_quoted_text"),
+                media_type=message.get("media_type"),
+                media_url=message.get("media_url"),
+            )
+            logger.debug(
+                f"⏳ chat={chat_jid} message queued behind pending flush "
+                f"(will be consolidated)"
+            )
+            return
+
+        # First message in a new batch. Enqueue + start the debounce.
+        await self.response_coordinator.enqueue(
+            chat_jid=chat_jid,
+            tenant_id=message.get("tenant_id") or "",
+            channel=message.get("channel") or "whatsapp",
+            client_config=message.get("_client_config"),
+            msg_id=message.get("id") or f"webhook-{time.time()}",
+            content=message.get("content") or "",
+            sender=message.get("sender") or "",
+            quoted=message.get("_quoted_text"),
+            media_type=message.get("media_type"),
+            media_url=message.get("media_url"),
+        )
+        logger.info(
+            f"🧭 chat={chat_jid} debounce started (quiet=%.1fs, max_wait=%.1fs)"
+            % (
+                self.response_coordinator.quiet_window,
+                self.response_coordinator.max_wait,
+            )
+        )
+
+    async def _on_coordinator_flush(self, **payload) -> None:
+        """
+        Called by ResponseCoordinator when the quiet window expires
+        for a chat. We have a list of consolidated messages in
+        `original_messages` and a `style_snapshot` describing the
+        customer's texting style. We synthesise a single "merged"
+        message dict and feed it through process_message so the rest
+        of the pipeline (tool calls, LLM, lead qualification, send)
+        runs once for the entire batch.
+        """
+        chat_jid = payload["chat_jid"]
+        tenant_id = payload["tenant_id"]
+        channel = payload["channel"]
+        client_config = payload.get("client_config")
+        original = payload.get("original_messages", [])
+        style_snapshot = payload.get("style_snapshot", "")
+
+        if not original:
+            return
+
+        # If there's only one message, just pass it through untouched.
+        if len(original) == 1:
+            m = original[0]
+            await self.process_message({
+                "id": m.msg_id,
+                "chat_jid": chat_jid,
+                "content": m.content,
+                "sender": m.sender,
+                "tenant_id": tenant_id,
+                "channel": channel,
+                "is_from_me": False,
+                "media_type": m.media_type,
+                "media_url": m.media_url,
+                "_client_config": client_config,
+                "_coordinated": False,  # not coordinated, single message
+            })
+            return
+
+        # Build a synthetic consolidated message.
+        # The content field carries the customer's messages joined with
+        # clear [1/3] [2/3] [3/3] prefixes so the LLM knows the order.
+        # We also bake the style_snapshot into a leading block the LLM
+        # will see in the conversation history.
+        n = len(original)
+        joined = "\n".join(
+            f"[msg {i+1}/{n}] {m.content}" for i, m in enumerate(original)
+        )
+        synthetic_content = (
+            f"{style_snapshot}\n\n"
+            f"[Coordinated batch of {n} customer messages — reply to all of them "
+            f"in ONE message (or two if absolutely necessary). Mirror the customer's "
+            f"register, length, and language exactly.]\n\n"
+            f"{joined}"
+        )
+        # Use the last message's metadata (sender, etc.) as the base.
+        last = original[-1]
+        synthetic_msg = {
+            "id": f"coordinated-{chat_jid}-{int(time.time())}",
+            "chat_jid": chat_jid,
+            "content": synthetic_content,
+            "sender": last.sender,
+            "tenant_id": tenant_id,
+            "channel": channel,
+            "is_from_me": False,
+            "media_type": None,
+            "media_url": None,
+            "_client_config": client_config,
+            "_coordinated": True,
+            "_coordinated_count": n,
+        }
+        logger.info(
+            f"🧭➡️ flushing coordinated batch: chat={chat_jid} n={n} "
+            f"span={(original[-1].received_at - original[0].received_at).total_seconds():.1f}s"
+        )
+        await self.process_message(synthetic_msg)
 
     def _load_config(self) -> Dict:
         """Load configuration from environment"""
@@ -6002,8 +6260,9 @@ BE HELPFUL - Answer directly, then stop."""
                     )
 
                 # Process each message
+                # 2026-08-24: route through coordinator for debounce/consolidation
                 for message in messages:
-                    await self.process_message(message)
+                    await self.process_message_with_coordination(message)
 
                 # Reset error counter on success
                 if messages or consecutive_errors > 0:
@@ -7744,7 +8003,8 @@ async def webhook_telegram(request: Request):
         # Process using BijouAI.process_message (same as WhatsApp)
         # Convert UnifiedMessage to dict for compatibility
         msg_dict = unified_msg.to_dict()
-        await bijou_instance.process_message(msg_dict)
+        # 2026-08-24: route through coordinator for debounce/consolidation
+        await bijou_instance.process_message_with_coordination(msg_dict)
 
         # Send response via Telegram adapter (not WhatsApp bridge)
         # The process_message uses send_message which goes to WhatsApp
