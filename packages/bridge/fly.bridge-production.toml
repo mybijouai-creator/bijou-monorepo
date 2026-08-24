@@ -5,7 +5,10 @@ primary_region = "sin"
 image = "aldinokemal2104/go-whatsapp-web-multidevice:latest"
 
 [env]
-APP_BASIC_AUTH = "bijou-prod:Zk9mKhN7vP2xQeLw8RtY4jDcXaS6bMfU"
+# APP_BASIC_AUTH is intentionally NOT here. Everything under [env] is stored and
+# rendered by Fly in plaintext and is committed to this repo, which is public.
+# The live bridge credential used to sit on this line. Set it as a secret instead:
+#   flyctl secrets set APP_BASIC_AUTH="$BRIDGE_USER:$BRIDGE_PASSWORD" -a bijou-bridge-production-v2
 APP_OS = "BijouAI-Production"
 APP_PORT = "3000"
 WHATSAPP_AUTO_DOWNLOAD_MEDIA = "true"

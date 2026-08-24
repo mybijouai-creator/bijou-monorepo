@@ -14,8 +14,12 @@ pip install httpx python-dotenv supabase
 # Copy this to .env.test
 TEST_TENANT_ID="your-tenant-uuid-here"
 TEST_PHONE="+60123456789"  # Your WhatsApp number
-BRIDGE_PASSWORD="Zk9mKhN7vP2xQeLw8RtY4jDcXaS6bMfU"  # Production bridge password
+BRIDGE_PASSWORD="your-bridge-password-here"  # copy from .env, never commit it
 ```
+
+> ⚠️ This line previously contained the real production bridge password, and this
+> repo is public. It has been removed from the working tree, but it remains in git
+> history — rotating `BRIDGE_PASSWORD` is the only actual remedy.
 
 ### 3. Get your tenant ID
 

@@ -17,8 +17,8 @@
 #
 # Privacy levels:
 #   - strict:   Primary + fallbacks must BOTH be on the strict-providers list
-#               (gemini direct + openai direct). OpenRouter and other multi-tenant
-#               aggregators are NEVER used. For PDPA-grade customer PII.
+#               (gemini direct + openai direct). OpenRouter and MiniMax are NEVER
+#               used. For PDPA-grade customer PII.
 #   - standard: OpenRouter and free-pool providers are allowed as fallbacks.
 #               For normal conversation, lead capture, KB lookups.
 #
@@ -205,6 +205,13 @@ providers:
     # If OPENROUTER_API_KEY is unset, all openrouter fallback entries log
     # "no fallback available" and the alias skips them.
 
+  minimax:
+    # MiniMax (also serves Claude via Anthropic-compatible base URL).
+    # NOT in strict-privacy allow-list — we treat it like OpenRouter.
+    type: openai_compatible
+    env_keys: "MINIMAX_API_KEY"
+    base_url: "https://api.minimax.io/v1"
+
 # =============================================================================
 # Cost observability — kept inline for transparency.
 # llm_gateway_v2 uses cost_per_1k_input/output to log cost_usd per request.
@@ -221,3 +228,12 @@ cost_per_1k:
   openrouter/google/gemini-2.5-flash:
     input_usd: 0.0001
     output_usd: 0.0004
+  minimax/MiniMax-M2.7:
+    input_usd: 0.0002
+    output_usd: 0.0008
+  minimax/MiniMax-M2.5:
+    input_usd: 0.0001
+    output_usd: 0.0004
+  minimax/MiniMax-M3:
+    input_usd: 0.0003
+    output_usd: 0.0012

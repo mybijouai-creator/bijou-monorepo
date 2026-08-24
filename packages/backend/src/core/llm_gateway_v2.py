@@ -759,7 +759,7 @@ class LLMGateway:
                 pass
             return text, raw, pt, ct, used_model, function_calls
 
-        if provider_name in ("openai_compatible", "openrouter"):
+        if provider_name in ("openai_compatible", "openrouter", "minimax"):
             pcfg = self._provider_cfg(provider_name)
             keys = _read_env_keys(pcfg.get("env_keys", ""))
             if not keys:

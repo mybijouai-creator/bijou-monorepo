@@ -181,30 +181,87 @@ def _check_new_tables_exist() -> Dict[str, Any]:
 
 
 def _check_gemini_reachable() -> Dict[str, Any]:
-    """Verify the Gemini API key is valid by listing models.
-    This is the cheapest possible call (no token cost).
+    """Verify at least one LLM provider key works by attempting a cheap probe.
+    Tries Gemini first (primary for most aliases), then OpenAI, then MiniMax.
+    Returns the first successful provider; if all fail, reports a clear error
+    so the operator knows which keys are dead.
     """
     import urllib.request
     import urllib.error
     import json
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not set")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    req = urllib.request.Request(url, method="GET")
-    with urllib.request.urlopen(req, timeout=4) as resp:
-        body = json.loads(resp.read().decode("utf-8"))
-    models = body.get("models", [])
-    if not models:
-        raise RuntimeError("Gemini returned no models")
-    # The model we actually use
-    has_flash = any("gemini-2.5-flash" in m.get("name", "") for m in models)
-    return {
-        "detail": "reachable",
-        "models_count": len(models),
-        "gemini_2_5_flash_available": has_flash,
-    }
+    tried = []
+    # 1. Try all configured Gemini keys (GEMINI_API_KEY + GEMINI_API_KEYS split)
+    gemini_keys = []
+    primary = os.getenv("GEMINI_API_KEY", "").strip()
+    if primary:
+        gemini_keys.append(("GEMINI_API_KEY", primary))
+    csv = os.getenv("GEMINI_API_KEYS", "").strip()
+    if csv:
+        for i, k in enumerate([s.strip() for s in csv.split(",") if s.strip()]):
+            gemini_keys.append((f"GEMINI_API_KEYS[{i}]", k))
+    for label, key in gemini_keys:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            models = body.get("models", [])
+            has_flash = any("gemini-2.5-flash" in m.get("name", "") for m in models)
+            return {
+                "detail": f"reachable via {label}",
+                "provider": "gemini",
+                "models_count": len(models),
+                "gemini_2_5_flash_available": has_flash,
+            }
+        except urllib.error.HTTPError as e:
+            tried.append({"provider": "gemini", "key": label, "status": e.code, "reason": e.read().decode()[:120]})
+        except Exception as e:
+            tried.append({"provider": "gemini", "key": label, "status": None, "reason": str(e)[:120]})
+
+    # 2. Try OpenAI
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if openai_key:
+        try:
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {openai_key}"},
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                return {"detail": "reachable via OPENAI_API_KEY", "provider": "openai"}
+        except urllib.error.HTTPError as e:
+            tried.append({"provider": "openai", "key": "OPENAI_API_KEY", "status": e.code, "reason": e.read().decode()[:120]})
+        except Exception as e:
+            tried.append({"provider": "openai", "key": "OPENAI_API_KEY", "status": None, "reason": str(e)[:120]})
+
+    # 3. Try MiniMax
+    minimax_key = os.getenv("MINIMAX_API_KEY", "").strip()
+    minimax_base = os.getenv("MINIMAX_OPENAI_BASE_URL", "https://api.minimax.io/v1").strip()
+    if minimax_key:
+        try:
+            req = urllib.request.Request(
+                f"{minimax_base.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {minimax_key}"},
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                return {"detail": "reachable via MINIMAX_API_KEY", "provider": "minimax"}
+        except urllib.error.HTTPError as e:
+            tried.append({"provider": "minimax", "key": "MINIMAX_API_KEY", "status": e.code, "reason": e.read().decode()[:120]})
+        except Exception as e:
+            tried.append({"provider": "minimax", "key": "MINIMAX_API_KEY", "status": None, "reason": str(e)[:120]})
+
+    # All providers dead — surface a clear actionable error.
+    if not tried:
+        raise RuntimeError("No LLM provider API keys configured (GEMINI_API_KEY, OPENAI_API_KEY, MINIMAX_API_KEY all unset)")
+    summary = "; ".join(
+        f"{t['provider']}:{t['status']}" for t in tried[:5]
+    )
+    raise RuntimeError(
+        f"ALL LLM providers dead ({len(tried)} keys tried). Last error: {summary}. "
+        f"Regenerate keys at aistudio.google.com/apikey / platform.openai.com / minimax.io"
+    )
 
 
 def _check_stripe_configured() -> Dict[str, Any]:

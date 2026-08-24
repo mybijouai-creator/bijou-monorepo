@@ -307,11 +307,19 @@ curl -X GET "https://bridge.example.com/devices/bijou-tenant-abc123/login" \
 
 **Example:**
 
+> ⚠️ An earlier revision of this file hardcoded the real production password
+> here, and this repo is public. Treat that credential as compromised: rotate
+> `BRIDGE_PASSWORD`, and remember that removing it from the working tree does
+> **not** remove it from git history.
+
 ```python
 import base64
+import os
 
-username = "bijou-prod"
-password = "8yF9mKp2NxQz5wBvTg4hL7jRdC3sE6aU"
+# Never hardcode these — they come from BRIDGE_USER / BRIDGE_PASSWORD in .env,
+# which is gitignored.
+username = os.environ["BRIDGE_USER"]
+password = os.environ["BRIDGE_PASSWORD"]
 credentials = f"{username}:{password}"
 auth_token = base64.b64encode(credentials.encode()).decode()
 
@@ -632,15 +640,17 @@ send_message(device["id"], phone, message)
 
 ### Current Implementation (INCORRECT)
 
-**File:** `w3j-bijou-enterprise/src/saas/onboarding_complete.py`
+**File:** `packages/backend/src/saas/onboarding_complete.py`
 
 ```python
 async def provision_whatsapp_device(tenant_id: str, business_name: str):
     """Background task: Create WhatsApp device on bridge"""
     try:
         bridge_url = os.getenv("BRIDGE_URL", "https://bijou-bridge-production.fly.dev")
-        bridge_user = os.getenv("BRIDGE_USER", "bijou-prod")
-        bridge_pass = os.getenv("BRIDGE_PASSWORD", "8yF9mKp2NxQz5wBvTg4hL7jRdC3sE6aU")
+        # No default. A hardcoded fallback silently authenticates with a baked-in
+        # credential whenever the env var is missing — fail loudly instead.
+        bridge_user = os.environ["BRIDGE_USER"]
+        bridge_pass = os.environ["BRIDGE_PASSWORD"]
 
         bridge_client = WhatsAppBridgeClient(
             base_url=bridge_url,
@@ -657,7 +667,7 @@ async def provision_whatsapp_device(tenant_id: str, business_name: str):
 
 ### Fixed Implementation (CORRECT)
 
-**File:** `w3j-bijou-enterprise/src/saas/onboarding_complete.py`
+**File:** `packages/backend/src/saas/onboarding_complete.py`
 
 ```python
 async def provision_whatsapp_device(tenant_id: str, business_name: str):
@@ -671,8 +681,10 @@ async def provision_whatsapp_device(tenant_id: str, business_name: str):
     """
     try:
         bridge_url = os.getenv("BRIDGE_URL", "https://bijou-bridge-production.fly.dev")
-        bridge_user = os.getenv("BRIDGE_USER", "bijou-prod")
-        bridge_pass = os.getenv("BRIDGE_PASSWORD", "8yF9mKp2NxQz5wBvTg4hL7jRdC3sE6aU")
+        # No default. A hardcoded fallback silently authenticates with a baked-in
+        # credential whenever the env var is missing — fail loudly instead.
+        bridge_user = os.environ["BRIDGE_USER"]
+        bridge_pass = os.environ["BRIDGE_PASSWORD"]
 
         # Use tenant_id as device_id for 1:1 mapping
         device_id = f"bijou-{tenant_id}"
@@ -717,7 +729,7 @@ async def provision_whatsapp_device(tenant_id: str, business_name: str):
 
 ### Updated WhatsAppBridgeClient
 
-**File:** `w3j-bijou-enterprise/src/core/whatsapp_bridge_client.py`
+**File:** `packages/backend/src/core/whatsapp_bridge_client.py`
 
 ```python
 def create_device(self, device_id: Optional[str] = None) -> Dict[str, Any]:
@@ -827,7 +839,7 @@ def get_device_status(self, device_id: str) -> Dict[str, Any]:
 
 ### Database Schema Update
 
-**File:** `w3j-bijou-enterprise/database/013_device_state_tracking.sql`
+**File:** `packages/backend/migrations-py/add_device_session_schema.sql` (the pre-monorepo `database/013_device_state_tracking.sql` no longer exists — verify this is the migration you mean before relying on it)
 
 ```sql
 -- Add device_state column to track lifecycle

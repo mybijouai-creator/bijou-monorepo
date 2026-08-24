@@ -215,8 +215,11 @@ async def get_whatsapp_qr(tenant_id: str):
 
         # Setup bridge client
         bridge_url = os.getenv("BRIDGE_URL", "https://bijou-bridge-production.fly.dev")
-        bridge_user = os.getenv("BRIDGE_USER", "bijou-prod")
-        bridge_pass = os.getenv("BRIDGE_PASSWORD", "8yF9mKp2NxQz5wBvTg4hL7jRdC3sE6aU")
+        # No fallback defaults. The previous hardcoded pair shipped in a public
+        # repo, so an unset env var used to mean "authenticate with a leaked
+        # credential". Missing config must fail loudly instead.
+        bridge_user = os.environ["BRIDGE_USER"]
+        bridge_pass = os.environ["BRIDGE_PASSWORD"]
 
         # Generate or retrieve device_id
         if device_result.data:
@@ -343,8 +346,11 @@ async def get_qr_image_proxy(tenant_id: str, qr_filename: str):
     """
     try:
         bridge_url = os.getenv("BRIDGE_URL", "https://bijou-bridge-production.fly.dev")
-        bridge_user = os.getenv("BRIDGE_USER", "bijou-prod")
-        bridge_pass = os.getenv("BRIDGE_PASSWORD", "8yF9mKp2NxQz5wBvTg4hL7jRdC3sE6aU")
+        # No fallback defaults. The previous hardcoded pair shipped in a public
+        # repo, so an unset env var used to mean "authenticate with a leaked
+        # credential". Missing config must fail loudly instead.
+        bridge_user = os.environ["BRIDGE_USER"]
+        bridge_pass = os.environ["BRIDGE_PASSWORD"]
 
         # Fetch QR image from bridge with auth
         image_url = f"{bridge_url}/statics/qrcode/{qr_filename}"

@@ -171,3 +171,14 @@ legacy/
 .git.broken/
 .git.broken2/
 
+
+# Local agent state (Mavis, Claude, Codex, Serena)
+.agents/
+.codex/
+.serena/
+
+# Local Claude Code state
+.claude/
+
+# Backup / progress files
+packages/backend/scripts/_backup/

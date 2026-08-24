@@ -1,4 +1,4 @@
-# Deployment Blockers — 2026-08-24
+# Deployment Blockers ï¿½ 2026-08-24
 
 **Author:** Independent SRE-style investigation (Verifier agent).
 **Scope:** Why isn't Bijou AI in production today? What are the *real*
@@ -24,7 +24,7 @@ points webhooks at a dead Fly app, a missing
 for per-tenant rollout, zero alerting on top of the self-test, and
 no database backup plan that survives the Coolify host dying. None
 of the five known blockers are actually a deploy-stopper for the
-Coolify path — Coolify doesn't need Fly.io or GitHub Actions at all.
+Coolify path ï¿½ Coolify doesn't need Fly.io or GitHub Actions at all.
 The system can be deployed today, but only after a 2-3 hour
 "housekeeping" sprint; the per-tenant bridge and the security cleanup
 are each an additional sprint.
@@ -32,7 +32,7 @@ are each an additional sprint.
 ---
 
 
-## 1. The five "known blockers" — verified, refuted, or qualified
+## 1. The five "known blockers" ï¿½ verified, refuted, or qualified
 
 ### 1.1 Fly.io billing locked (claimed)
 
@@ -51,7 +51,7 @@ are each an additional sprint.
   `packages/landing/.env:23` and `.env:206`, plus the `FLY_*_TOKEN`
   variants). It is not certain every one of them is locked. The
   "deploy-scoped token" still works for `fly deploy` even after a
-  metrics/auth 401 — see the comment at
+  metrics/auth 401 ï¿½ see the comment at
   `.github/workflows/backend.yml:184-186`. So a manual `flyctl deploy`
   with a deploy-scoped token *might* still work, and we have not
   actually tested this. The user assumed "billing locked = every
@@ -76,7 +76,7 @@ are each an additional sprint.
   your account is locked due to a billing issue." I cannot see
   private billing state from here. The evidence I *can* see in the
   repo is that the landing deploy is already disabled
-  (`.github/workflows/landing.yml:79` — `if: false`) with a comment
+  (`.github/workflows/landing.yml:79` ï¿½ `if: false`) with a comment
   explaining Vercel native integration handles it. The backend
   (`backend.yml:155-190`) and bridge (`bridge.yml:66-104`) workflows
   each have a `flyctl deploy` step that runs *after* the CI job.
@@ -88,7 +88,7 @@ are each an additional sprint.
 - **What the user has wrong:** the user treats "CI is locked" as
   monolithic. In fact:
   - `landing.yml` already routes production through Vercel native
-    integration — the GitHub deploy step is intentionally disabled
+    integration ï¿½ the GitHub deploy step is intentionally disabled
     (comment at `landing.yml:62-75` explains exactly why, including
     the 2026-08-10 sign-up outage that motivated it).
   - The Coolify path is completely independent of GitHub Actions.
@@ -102,9 +102,9 @@ are each an additional sprint.
   Effort: 0 hours if you accept the Coolify path; 1 hour if you
   want CI tests back.
 
-### 1.3 Telnyx keys not rotated — 3 SECURITY.md files (claimed)
+### 1.3 Telnyx keys not rotated ï¿½ 3 SECURITY.md files (claimed)
 
-**Status: REFUTED — those SECURITY.md files do not exist in this repo.**
+**Status: REFUTED ï¿½ those SECURITY.md files do not exist in this repo.**
 
 - **Evidence:** recursive search for `SECURITY.md` excluding
   `node_modules/` and `legacy/`. **Zero hits** in the monorepo. The
@@ -124,7 +124,7 @@ are each an additional sprint.
   The voice/Telnyx work referenced in CLAUDE.md is in three
   separate external repos that are not part of the monorepo. The
   "3 SECURITY.md files" the user is referring to presumably live
-  in those external repos — but the user has confused "the work
+  in those external repos ï¿½ but the user has confused "the work
   for telnyx projects" with "code in this monorepo."
 - **What to do instead:** treat the Telnyx keys as un-rotated, plan
   a real rotation (dashboard ? rotate ? update Coolify env group ?
@@ -143,7 +143,7 @@ are each an additional sprint.
 - **Evidence:** root `.env:104` has `DATABASE_URL=` (empty). The
   variable the user named (`SUPABASE_DB_URL`) does not appear
   anywhere in the monorepo. The Postgres DSN is *not* what the
-  application uses at runtime — `auth_api.py:44` calls
+  application uses at runtime ï¿½ `auth_api.py:44` calls
   `os.getenv("SUPABASE_URL")` and `SUPABASE_SERVICE_KEY` for all
   normal Supabase traffic (REST, not direct SQL).
 - **What the user has right:** the Postgres DSN is needed for
@@ -154,7 +154,7 @@ are each an additional sprint.
   `DATABASE_URL=...`, run `python -m
   packages.backend.scripts.apply_migrations`.
 - **What the user has wrong:** the operator step is already
-  documented and explicit — the empty `DATABASE_URL=` in `.env`
+  documented and explicit ï¿½ the empty `DATABASE_URL=` in `.env`
   is not a hidden bug, it is the placeholder the owner fills in
   *just before* running migrations. Calling it a "blocker" is
   over-stating; it is a one-line owner action, gated on having
@@ -175,18 +175,18 @@ are each an additional sprint.
 
 - **Evidence:** `git remote -v` shows two remotes:
   - `mybijouai-creator` ?
-    `https://oauth2:github_pat_11CGKGOBI0…@github.com/mybijouai-creator/bijou-monorepo.git`
-    — the PAT is **embedded in the URL**. This is the working
+    `https://oauth2:github_pat_11CGKGOBI0ï¿½@github.com/mybijouai-creator/bijou-monorepo.git`
+    ï¿½ the PAT is **embedded in the URL**. This is the working
     remote. `mybijouai-creator/main` HEAD is `22a5ed4` and local
     `main` is also `22a5ed4` (verified via
     `git rev-list --left-right --count main...mybijouai-creator/main`
     ? `0	0`).
-  - `origin` ? `https://github.com/W3JDev/bijou-monorepo.git` —
+  - `origin` ? `https://github.com/<personal-account>/bijou-monorepo.git` ï¿½
     the legacy/old remote. Not the canonical repo per CLAUDE.md.
 - **What the user has right:** the `mnjbold` identity is locked
   out of push. CLAUDE.md confirms the PAT-from-Hermes workaround
   is in use.
-- **What the user has wrong:** this is **not blocking anything** —
+- **What the user has wrong:** this is **not blocking anything** ï¿½
   local and remote are in sync, no commits are stranded, the
   workaround is working as of 2026-08-24 12:54 MYT. The user's
   worry that "29 commits sit unpushed on local" was true on
@@ -197,22 +197,22 @@ are each an additional sprint.
   `mybijouai-creator/bijou-monorepo` scope by design, so the
   blast radius is limited. But the per-AGENTS.md convention is to
   read from
-  `C:\Users\W3jde\.hermes\secrets\.env.mybijou-creator` and not
+  `%USERPROFILE%\.hermes\secrets\.env.mybijou-creator` and not
   store it in `.git/config`. This is a footgun.
 - **Effort:** 0 minutes if you accept the embedded-PAT pattern.
   30 minutes to extract to a `credential.helper` and scrub the URL.
 
 ---
 
-## 2. Hidden blockers — what nobody has called out
+## 2. Hidden blockers ï¿½ what nobody has called out
 
 ### 2.1 [CRITICAL] Live admin API key in git history
 
 - **Evidence:** `docs/ADMIN_API_KEY.txt` was committed in commit
   `1e718eb` on 2026-08-10. The file contains
   `ADMIN_API_KEY = 8tunr0gzd32v16bphiwqfsljxya79o5m` and the
-  literal rotation command `fly secrets set ADMIN_API_KEY=…`. The
-  file is **not** in `.gitignore` — `.gitignore` only covers
+  literal rotation command `fly secrets set ADMIN_API_KEY=ï¿½`. The
+  file is **not** in `.gitignore` ï¿½ `.gitignore` only covers
   `.env*` and `*_token` patterns, neither of which match this
   filename. The file is tracked on `main` and on
   `mybijouai-creator` (per the local=remote sync at `22a5ed4`).
@@ -231,7 +231,7 @@ are each an additional sprint.
   rewrite history with `git-filter-repo` (destructive; do not
   do without explicit owner OK per the Supabase-token rotation
   precedent in `docs/SUPABASE_TOKEN_ROTATION.md:97-100`).
-- **Effort:** 30 minutes. Severity: P0 — secrets in git are how
+- **Effort:** 30 minutes. Severity: P0 ï¿½ secrets in git are how
   outages start.
 
 ### 2.2 [HIGH] `.env` still has `PUBLIC_URL=https://bijou-production.fly.dev`
@@ -244,15 +244,15 @@ are each an additional sprint.
 - **Why this matters:** `_check_env_canonical_url()` in
   `packages/backend/src/core/self_test_api.py:241-258` explicitly
   fails if `PUBLIC_URL` contains `fly.dev`. The 2026-08-10
-  canonical-domain bug class — auth silently looping because the
-  redirect lands on the wrong origin — is documented in CLAUDE.md
-  § "Recurring bug class". The codebase defends itself with the
+  canonical-domain bug class ï¿½ auth silently looping because the
+  redirect lands on the wrong origin ï¿½ is documented in CLAUDE.md
+  ï¿½ "Recurring bug class". The codebase defends itself with the
   `_public_base_url()` helper (which prefers
   `PUBLIC_URL` ? `APP_URL` ? `CANONICAL_PUBLIC_URL`), but anything
-  that reads `PUBLIC_URL` directly without the helper — like
+  that reads `PUBLIC_URL` directly without the helper ï¿½ like
   `bijou.py:934`
   `dashboard_url = f"{os.getenv('PUBLIC_URL', 'https://app.mybijou.xyz')}/dashboard?..."`
-  — will use the wrong value if `PUBLIC_URL` is set.
+  ï¿½ will use the wrong value if `PUBLIC_URL` is set.
 - **Specific risk:** `ops/coolify/DEPLOY.md:34` correctly hardcodes
   `PUBLIC_URL: "https://app.mybijou.xyz"` in the Coolify compose.
   So *if* the deploy uses the Coolify compose's env group, the
@@ -265,18 +265,18 @@ are each an additional sprint.
   `PUBLIC_URL=https://app.mybijou.xyz`. Same for any other
   `.env*` file with the wrong value. Add a pre-commit hook that
   greps for `PUBLIC_URL=.*fly.dev` and blocks the commit.
-- **Effort:** 5 minutes. Severity: P1 — known failure mode with
+- **Effort:** 5 minutes. Severity: P1 ï¿½ known failure mode with
   a known fix and a known self-test that catches it.
 
 ### 2.3 [HIGH] The WhatsApp bridge's deploy config points webhooks at a dead Fly app
 
 - **Evidence:** `packages/bridge/fly.toml:19`:
-  `BIJOU_WEBHOOK_URL = 'https://bijou-ai-enterprise-w3j.fly.dev/webhook/message'`.
-  The Fly app `bijou-ai-enterprise-w3j` is referenced in
+  `BIJOU_WEBHOOK_URL = 'https://bijou-ai-enterprise-legacy.fly.dev/webhook/message'`.
+  The Fly app `bijou-ai-enterprise-legacy` is referenced in
   `docs/DEPLOYMENT_SAFETY.md:26-31` as the "OLD production Bijou"
-  — *not* the canonical `bijou-production` app. There is no
+  ï¿½ *not* the canonical `bijou-production` app. There is no
   workflow in `.github/workflows/` that deploys to
-  `bijou-ai-enterprise-w3j`, and per CLAUDE.md that app is on the
+  `bijou-ai-enterprise-legacy`, and per CLAUDE.md that app is on the
   old (pre-monorepo) layout. It is the one we are explicitly
   trying to retire.
 - **Why this matters:** if anyone deploys the bridge using
@@ -286,13 +286,13 @@ are each an additional sprint.
   bridge container starts fine, `/health` returns 200, Fly keeps
   the machine running, but messages vanish into a black hole. No
   alert would fire because the bridge does not know the webhook
-  is failing — it just gets 5xx responses from the dead app and
+  is failing ï¿½ it just gets 5xx responses from the dead app and
   the messages are dropped.
-- **Specific risk:** the coolify compose is correct — it uses
+- **Specific risk:** the coolify compose is correct ï¿½ it uses
   `${BRIDGE_API_KEY:?required}` and points to the backend via
   service discovery (`docker-compose.coolify.yml:96-102`). The
   per-tenant bridge compose that the runbook says is required
-  (`ops/coolify/DEPLOY.md:96-104`) **does not exist yet** — the
+  (`ops/coolify/DEPLOY.md:96-104`) **does not exist yet** ï¿½ the
   runbook calls it `docker-compose.bridge-only.yml` and marks it
   `TBD`. So the multi-tenant bridge pattern the user thinks they
   have is not actually deployable.
@@ -304,7 +304,7 @@ are each an additional sprint.
   `BIJOU_BACKEND_URL` for production deployments; (c) add a
   bridge-side smoke test that POSTs a fake message and asserts
   the backend received it.
-- **Effort:** 1-2 hours. Severity: P1 — silent message loss in
+- **Effort:** 1-2 hours. Severity: P1 ï¿½ silent message loss in
   production is the most user-visible failure mode possible.
 
 ### 2.4 [HIGH] No alerting on top of the self-test
@@ -324,7 +324,7 @@ are each an additional sprint.
   monitoring`. The `SENTRY_DSN` env var in
   `ops/coolify/coolify.env.example:53` is also commented as
   optional. The Coolify healthcheck polls every 30s and would
-  restart the container on persistent failure — but the
+  restart the container on persistent failure ï¿½ but the
   `docker-compose.coolify.yml:70` healthcheck hits
   `/api/self-test/summary`, which only returns 503 on *critical*
   failures. A Supabase-down-but-Gemini-up scenario (plausible
@@ -342,7 +342,7 @@ are each an additional sprint.
   Coolify env group so unhandled exceptions show up there; (c)
   set `BIJOU_BETTERSTACK_TOKEN` to a free-tier BetterStack /
   Cronitor / UptimeRobot token for external uptime checks.
-- **Effort:** 1 hour. Severity: P1 — first paying customer
+- **Effort:** 1 hour. Severity: P1 ï¿½ first paying customer
   outage will surface this.
 
 ### 2.5 [MEDIUM] No database backup plan that survives the Coolify host
@@ -351,7 +351,7 @@ are each an additional sprint.
   `bridge-data` and `backend-uploads` volumes with
   `driver: local`. `ops/coolify/DEPLOY.md:170-185` ("5. Backup")
   acknowledges this and says "Coolify does NOT back up local
-  volumes by default" — then says the operator must configure
+  volumes by default" ï¿½ then says the operator must configure
   backup in the Coolify UI. The instructions are correct but
   **not done** (no `.env`-style or compose-style backup
   configuration, no `coolify backup` script, no S3 destination
@@ -360,8 +360,8 @@ are each an additional sprint.
   (`packages/bridge/store/*.db3`), the bridge message history
   (`packages/bridge/store/*.db`), and the user uploads in
   `backend-uploads` all live on a single Coolify host disk. If
-  the host dies — disk failure, hosting provider incident,
-  accidental `docker volume prune` — every per-tenant WhatsApp
+  the host dies ï¿½ disk failure, hosting provider incident,
+  accidental `docker volume prune` ï¿½ every per-tenant WhatsApp
   session and every user upload is gone. Tenants have to
   re-scan QR codes. Recoverable but disruptive.
 - **The Supabase side is better:** Supabase has PITR on paid
@@ -387,7 +387,7 @@ are each an additional sprint.
   `/api/self-test/summary`. So the compose override is right,
   but the bare image's healthcheck is wrong.
 - **Why this matters:** if anyone ever runs the bare image (not
-  through the compose — e.g. `docker run` for a one-off smoke
+  through the compose ï¿½ e.g. `docker run` for a one-off smoke
   test, or a future CI pipeline that tests the image directly),
   they get the bad healthcheck. This is the source of the
   "broken deploys because healthcheck lies" footgun that
@@ -433,7 +433,7 @@ are each an additional sprint.
   `https://bijou-production.fly.dev/api/billing/stripe/webhook`
   (which is what `packages/backend/src/saas/payment_api.py:424`
   implies), then **a Coolify migration breaks Stripe webhooks**
-  — the URL would need to be re-registered in Stripe dashboard
+  ï¿½ the URL would need to be re-registered in Stripe dashboard
   as `https://app.mybijou.xyz/api/billing/stripe/webhook` (or
   the equivalent Coolify URL). And the `STRIPE_WEBHOOK_SECRET`
   rotates when the endpoint URL changes, so the secret in the
@@ -445,7 +445,7 @@ are each an additional sprint.
   deactivate it, (c) create a new endpoint at the Coolify URL,
   (d) set the new `STRIPE_WEBHOOK_SECRET` in the Coolify env
   group.
-- **Effort:** 30 minutes + a Stripe test event. Severity: P1 —
+- **Effort:** 30 minutes + a Stripe test event. Severity: P1 ï¿½
   silent subscription lifecycle failures = revenue loss.
 
 ---
@@ -467,7 +467,7 @@ are each an additional sprint.
   `https://app.mybijou.xyz`) but Google rejects with
   `redirect_uri_mismatch` because the canonical domain is *not*
   registered in the Google Cloud project. The user has already
-  documented this exact failure mode in CLAUDE.md § "Recurring
+  documented this exact failure mode in CLAUDE.md ï¿½ "Recurring
   bug class" (the 2026-08-10 fix), and the `GOOGLE_REDIRECT_URI`
   Fly secret needs to match the *registered* URL in Google Cloud
   Console, not the canonical domain.
@@ -477,7 +477,7 @@ are each an additional sprint.
   `ops/coolify/coolify.env.example` as required, (c) set the
   matching value in the Coolify env group, (d) test the Google
   sign-in flow end-to-end after deploy.
-- **Effort:** 1 hour including the test. Severity: P1 — Google
+- **Effort:** 1 hour including the test. Severity: P1 ï¿½ Google
   sign-in is the most-used auth path after email.
 
 ### 2.10 [LOW] Telegram bot token not in `.env`
@@ -516,7 +516,7 @@ are each an additional sprint.
   (`https://resend.com/domains`) that `mybijou.xyz` is verified
   with the DKIM, SPF, and DMARC records Resend provides. Add a
   `docs/RESEND_VERIFICATION.md` with the status.
-- **Effort:** 15 minutes to verify. Severity: P1 — without it,
+- **Effort:** 15 minutes to verify. Severity: P1 ï¿½ without it,
   login is broken.
 
 ### 2.12 [LOW] Five different Fly deploy tokens, no canonical reference
@@ -525,9 +525,9 @@ are each an additional sprint.
   (none logged here for safety, but counted):
   - root `.env:259-260`: `FLY_IO_PRODUCTION_DEPLOY_TOKEN`,
     `FLY_IO_PRODUCTION_BRIDGE_DEPLOY_TOKEN`
-  - `packages/landing/.env:23`: "OLD FLY.IO TOKEN —
+  - `packages/landing/.env:23`: "OLD FLY.IO TOKEN ï¿½
     REACTIVATED"
-  - `packages/landing/.env:206`: "NEW FLY.IO TOKEN — USE THIS
+  - `packages/landing/.env:206`: "NEW FLY.IO TOKEN ï¿½ USE THIS
     FOR DEPLOYMENT"
   - root `.env:268`: `BIJOU_FLY_API_TOKEN=` (empty)
   - `SPRITE_TOKEN` is also present (line 212 of landing .env),
@@ -549,7 +549,7 @@ are each an additional sprint.
 
 - **Evidence:** the `packages/bridge/` directory has *three*
   Fly configs: `fly.toml` (custom Go, 256MB VM, webhook to the
-  dead `bijou-ai-enterprise-w3j.fly.dev`), `fly.staging.toml`
+  dead `bijou-ai-enterprise-legacy.fly.dev`), `fly.staging.toml`
   (custom Go, 512MB, points to `bijou-staging.fly.dev`),
   `fly.bridge-production.toml` (GOWA Docker image
   `aldinokemal2104/go-whatsapp-web-multidevice:latest`, 1GB,
@@ -560,7 +560,7 @@ are each an additional sprint.
   `GOWA_BRIDGE_EXPLORATION_REPORT.md` and
   `GOWA_BRIDGE_EXPERT_GUIDE.md` describe a GOWA *v8.1.2*
   instance at `bijou-bridge-staging-v2.fly.dev` with Basic
-  Auth, a web UI, and multi-device support — that is the
+  Auth, a web UI, and multi-device support ï¿½ that is the
   **GOWA image option**, not the custom Go code.
 - **Why this matters:** the user has been talking about "the
   Go bridge" and "GOWA" as if they were the same thing. They
@@ -582,7 +582,7 @@ are each an additional sprint.
   source, or document clearly that the Coolify path uses the
   GOWA image and the Fly path uses the custom Go. Pick one.
 - **Effort:** 2-4 hours depending on which is chosen.
-  Severity: P1 — if the wrong one gets deployed, no WhatsApp
+  Severity: P1 ï¿½ if the wrong one gets deployed, no WhatsApp
   messages will reach the backend.
 
 ### 2.14 [LOW] WhatsApp inbound webhook URL is not registered in the bridge
@@ -661,9 +661,9 @@ land in the first two weeks of post-launch hardening.
 
 ---
 
-## 4. The "self-hosted GOWA" option — what it actually is
+## 4. The "self-hosted GOWA" option ï¿½ what it actually is
 
-**GOWA is already in the repo — but it is used as a *fallback* image, not as the production bridge.**
+**GOWA is already in the repo ï¿½ but it is used as a *fallback* image, not as the production bridge.**
 
 - **What GOWA is** (per the docs the user already has):
   `aldinokemal2104/go-whatsapp-web-multidevice` is a public
@@ -689,7 +689,7 @@ land in the first two weeks of post-launch hardening.
 - **What is *not* done**: the Coolify `Dockerfile.bridge` builds
   the **custom Go code** from `packages/bridge/main.go`
   (multi-stage `golang:1.24-alpine` ? `distroless/static`). The
-  custom Go bridge does *not* speak the GOWA webhook format —
+  custom Go bridge does *not* speak the GOWA webhook format ï¿½
   it speaks a different format (look at `main.go:650`
   `http.Post(webhookURL, ...)` and the payload structure it
   builds). The backend's `/webhook/message` would either
@@ -703,8 +703,9 @@ land in the first two weeks of post-launch hardening.
     the Coolify env group, mount a persistent volume at
     `/app/storages`. The backend's webhook receiver already
     understands the format. The `APP_BASIC_AUTH` value
-    (currently `bijou-prod:Zk9mKhN7vP2xQeLw8RtY4jDcXaS6bMfU`)
-    needs to be set on the backend too — but the
+    (currently `$BRIDGE_USER:$BRIDGE_PASSWORD` â€” the literal value used to be
+    printed here in a public repo; treat it as compromised and rotate it)
+    needs to be set on the backend too ï¿½ but the
     `BridgeAdapter` at
     `packages/backend/src/channels/bridge_adapter.py:35-65`
     uses `X-API-Key` header auth, not Basic Auth. So the
@@ -732,39 +733,39 @@ land in the first two weeks of post-launch hardening.
 
 ---
 
-## 5. CI/CD reality — what is actually deployable today
+## 5. CI/CD reality ï¿½ what is actually deployable today
 
 ### 5.1 What works today (no work needed)
 
-- **Landing (`mybijou.xyz`)** — Vercel native git integration.
-  Per CLAUDE.md § "Deployment topology" and the comment in
+- **Landing (`mybijou.xyz`)** ï¿½ Vercel native git integration.
+  Per CLAUDE.md ï¿½ "Deployment topology" and the comment in
   `.github/workflows/landing.yml:62-75`, this was re-pointed
   2026-08-10 and confirmed working. Every push to `main` on
   `mybijouai-creator/bijou-monorepo` builds on Vercel's
   infrastructure and deploys to `mybijou.xyz`. **Bypasses
   GitHub Actions billing completely.** Bypasses Fly.io.
-- **Landing preview (`Dockerfile.landing`)** — optional
+- **Landing preview (`Dockerfile.landing`)** ï¿½ optional
   self-hosted preview, gated behind `--profile preview` in
   Coolify. Works on any Coolify host with a port-3000
   reverse-proxy.
 
 ### 5.2 What is blocked
 
-- **`packages/backend/` deploys via GitHub Actions** — the
+- **`packages/backend/` deploys via GitHub Actions** ï¿½ the
   `deploy:` job in `.github/workflows/backend.yml:155-190`
   needs `BIJOU_FLY_API_TOKEN` and Fly deploy minutes. Both
   are blocked. The `ci:` job (lint, type-check, unit tests)
   may or may not be blocked depending on minutes; either way
   it is not a deploy dependency.
-- **`packages/bridge/` deploys via GitHub Actions** — same
+- **`packages/bridge/` deploys via GitHub Actions** ï¿½ same
   situation. `.github/workflows/bridge.yml:66-104`.
-- **Direct `flyctl deploy` from this machine** — Fly billing
+- **Direct `flyctl deploy` from this machine** ï¿½ Fly billing
   is locked. The `flyctl` command is installed (per the .env
   entries) but every deploy attempt returns 403. The 4 cached
   Fly deploy tokens in the local `.env*` files are not in
   scope here for safety, but they exist.
 - **`flyctl secrets set` on `bijou-production` or
-  `bijou-bridge-production-v2`** — same Fly lock. Any secret
+  `bijou-bridge-production-v2`** ï¿½ same Fly lock. Any secret
   rotation that needs a Fly secret update has to wait for Fly
   billing to clear OR move to Coolify.
 
@@ -826,8 +827,8 @@ Per the Coolify runbook (no direct cost cited, but inferred):
 
 ## 6. The honest summary
 
-The user's mental model — "Fly billing, GitHub billing, Telnyx
-keys, and DB DSN are the blockers" — is half right. The Fly
+The user's mental model ï¿½ "Fly billing, GitHub billing, Telnyx
+keys, and DB DSN are the blockers" ï¿½ is half right. The Fly
 billing and GitHub billing blockers are real but irrelevant
 because Coolify bypasses both. The Telnyx blocker is mis-stated
 (those keys may be un-rotated but the SECURITY.md files do not
@@ -846,7 +847,7 @@ accumulating since 2026-01-28.
 
 The first deploy on Coolify will work. The first *production
 incident* will be a learning experience, but the system will
-not silently lose data — the self-test catches the
+not silently lose data ï¿½ the self-test catches the
 canonical-class bugs and Coolify's auto-rollback catches the
 rest. The first *customer-impacting* incident will be the
 absence of alerting, not the absence of code.
@@ -859,4 +860,4 @@ The system is closer to shippable than the user thinks; the
 gap is roughly two focused days of housekeeping, not two
 months of engineering.
 
-— Verifier
+ï¿½ Verifier
