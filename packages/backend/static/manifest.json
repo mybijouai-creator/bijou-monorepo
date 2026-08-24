@@ -13,19 +13,19 @@
   "categories": ["business", "productivity", "ai", "automation"],
   "icons": [
     {
-      "src": "/icons/icon-192x192.png",
+      "src": "/static/icons/icon-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-512x512.png",
+      "src": "/static/icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-512x512.png",
+      "src": "/static/icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -35,23 +35,23 @@
     {
       "name": "Start Free Trial",
       "short_name": "Trial",
-      "description": "Sign up — 30-day money-back guarantee, no credit card",
-      "url": "/?action=signup",
-      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "96x96" }]
+      "description": "Sign up \u2014 30-day money-back guarantee, no credit card",
+      "url": "/signup",
+      "icons": [{ "src": "/static/icons/icon-192x192.png", "sizes": "96x96" }]
     },
     {
-      "name": "Chat on WhatsApp",
-      "short_name": "WhatsApp",
-      "description": "Talk to the Bijou team on WhatsApp",
-      "url": "https://wa.me/60174106981",
-      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "96x96" }]
+      "name": "Open Dashboard",
+      "short_name": "Dashboard",
+      "description": "Open the Bijou AI operator console",
+      "url": "/dashboard",
+      "icons": [{ "src": "/static/icons/icon-192x192.png", "sizes": "96x96" }]
     },
     {
-      "name": "Book a Demo",
-      "short_name": "Demo",
-      "description": "Schedule a live product demonstration",
-      "url": "https://cal.com/getbijou",
-      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "96x96" }]
+      "name": "Your Data Rights",
+      "short_name": "Data Rights",
+      "description": "PDPA / GDPR self-serve data access, export, or deletion",
+      "url": "/data-request",
+      "icons": [{ "src": "/static/icons/icon-192x192.png", "sizes": "96x96" }]
     }
   ],
   "related_applications": [],

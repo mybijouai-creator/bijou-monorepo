@@ -7,9 +7,14 @@
     <title>Bijou AI — Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/static/bijou-logo.svg" />
     <link rel="icon" type="image/png" href="/static/favicon.png" />
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
     <link rel="manifest" href="/static/manifest.json" />
     <meta name="theme-color" content="#0B3B2E" />
     <meta name="msapplication-TileColor" content="#0B3B2E" />
+    <!-- 2026-08-24: apple-mobile-web-app-capable is deprecated; the spec-compliant
+         name is now mobile-web-app-capable. We keep the Apple name for iOS Safari
+         backward-compat and add the new one alongside it. -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
       name="apple-mobile-web-app-status-bar-style"
@@ -1910,7 +1915,6 @@
                 </>
               )}
             </div>
-          </div>
 
           {/* 2026-08-23: Reasoning Trace side panel. EU AI Act 2024
               Article 13 transparency primitive. Tapping a "Why?" link on
