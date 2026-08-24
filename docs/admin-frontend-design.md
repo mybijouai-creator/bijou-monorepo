@@ -1,6 +1,6 @@
 # Bijou Admin Frontend — Design
 
-> **Status:** v0.1 scaffold (shipped 2026-08-24)
+> **Status:** v0.1 scaffold (shipped 2026-08-24, commit `8ac3744`)
 > **Owner:** W3J (solo)
 > **Goal:** The owner (and the owner's autonomous agent team) can run the entire platform — user mgmt, billing, migrations, keys, audit — from a single in-app console, without ever opening a terminal or reading code.
 
