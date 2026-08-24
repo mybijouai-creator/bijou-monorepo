@@ -207,6 +207,56 @@ handlers with `node --check api/<file>.js` plus a real request.
 
 ---
 
+## AI Gateway (v2)
+
+> The single rule: **never name a provider or model in a callsite.** All
+> LLM usage goes through `await llm.complete("ai://<alias>", messages)`.
+> The alias policy lives in `packages/backend/llm_gateway.yaml`.
+
+The gateway is data-driven: change the YAML, change the behaviour. No Python
+code change needed to add a new alias, add a new provider, or change a
+fallback order.
+
+**Six shipped aliases:**
+
+| Alias             | Purpose                                          | Privacy  | Daily cap |
+|-------------------|--------------------------------------------------|----------|-----------|
+| `ai://fast`       | Default chat replies — short, friendly.           | standard | $25       |
+| `ai://reasoning`  | Agent loop + tool-calling + complex KB lookups.   | standard | $50       |
+| `ai://extract`    | Structured JSON — handover, lead, emotion.        | standard | $10       |
+| `ai://private`    | PDPA-sensitive — **strict-only providers** (no OpenRouter). | strict | $20 |
+| `ai://helpdesk`   | `/api/help/chat` in-product support widget.       | standard | $5        |
+| `ai://vision`     | Image / document understanding (multimodal).      | standard | $10       |
+
+**Public surface:**
+
+```python
+from src.core.llm_gateway_v2 import llm
+result = await llm.complete("ai://reasoning", messages, tools=..., tenant_id=...)
+# result.text, .provider, .model, .fallback_reason, .function_calls,
+# .prompt_tokens, .completion_tokens, .cost_usd, .latency_ms
+```
+
+**Key files:**
+- Policy:       `packages/backend/llm_gateway.yaml`
+- Module:       `packages/backend/src/core/llm_gateway_v2.py`
+- Tests:        `packages/backend/tests/unit/test_llm_gateway_v2.py` (28 tests)
+- Usage table:  `public.llm_usage` (migration: `migrations-py/add_llm_usage.sql`)
+- Full docs:    `docs/AI_GATEWAY.md`
+
+**Status codes that trigger a fallback:** 429, 500, 502, 503, 504.
+400/401/403/404 are config bugs and surface to the caller without retrying.
+
+**Exceptions:** `BudgetExceeded` (daily cap hit) and `NoProviderAvailable`
+(no provider has a key) — both should become HTTP 429 / 503 to the user.
+
+The v1 key-rotator (`src/core/llm_gateway.py`'s `RoundRobinRotator`) is still
+in use — it handles **per-provider key** rotation (multiple Gemini keys for
+rate-limit spreading). v2 sits one layer up and adds **cross-provider**
+fallback. They are complementary, not in conflict.
+
+---
+
 ## Architecture
 
 ### Three runtimes, one repo

@@ -183,20 +183,23 @@ async def chat_message(req: MessageRequest):
     else:
         system_prompt = PUBLIC_SYSTEM_PROMPT
 
-    # Build conversation history for Gemini
-    contents = []
-    # Add history (last 10 turns max)
+    # Build conversation history for the AI gateway (OpenAI-style messages).
+    messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
     for turn in req.history[-10:]:
-        role = "user" if turn.role == "user" else "model"
-        contents.append({"role": role, "parts": [{"text": turn.content}]})
-    # Add current message
-    contents.append({"role": "user", "parts": [{"text": message}]})
+        role = "user" if turn.role == "user" else "assistant"
+        if turn.content:
+            messages.append({"role": role, "content": turn.content})
+    messages.append({"role": "user", "content": message})
 
     try:
-        reply = await _call_gemini_chat(system_prompt, contents)
-        return {"reply": reply, "status": "ok"}
+        # Routes via the alias policy: gemini-2.5-flash primary -> openrouter
+        # -> openai_compatible. See llm_gateway.yaml ai://helpdesk.
+        from src.core.llm_gateway_v2 import llm
+
+        result = await llm.complete("ai://helpdesk", messages)
+        return {"reply": result.text, "status": "ok"}
     except Exception as e:
-        logger.error(f"❌ help-chat Gemini error: {e}")
+        logger.error(f"❌ help-chat gateway error: {e}")
         return {
             "reply": "I'm having trouble thinking right now 😅 Please try again in a moment, or email support@mybijou.xyz",
             "status": "error",

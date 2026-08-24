@@ -28,6 +28,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -581,6 +582,19 @@ def _include_routers():
         logger.info("✅ Admin API routes included")
     except ImportError as e:
         logger.warning(f"⚠️ Could not import admin API: {e}")
+
+    # Admin Frontend API (v0.1, 2026-08-24)
+    # The /admin.html console and the admin MCP server talk to this
+    # router. It is gated on the public.platform_admins table (JWT
+    # path) OR the ADMIN_API_KEY env var (service-to-service path).
+    # EVERY mutating route writes a row to public.audit_log.
+    # See docs/admin-frontend-design.md and src/saas/admin_frontend_api.py.
+    try:
+        from src.saas.admin_frontend_api import router as admin_frontend_router
+        app.include_router(admin_frontend_router)
+        logger.info("✅ Admin Frontend API routes included (/admin/api/*)")
+    except ImportError as e:
+        logger.warning(f"⚠️ Could not import admin frontend API: {e}")
 
     try:
         from src.saas.knowledge_api import router as knowledge_router
@@ -3347,12 +3361,11 @@ Use `/quiet` to reduce my chattiness!
                                     api_key=self.config["gemini_api_key"]
                                 )
 
-                            # Upload image to Gemini
-                            image_part = types.Part.from_bytes(
-                                data=media_response.content,
-                                mime_type=media_response.headers.get(
-                                    "content-type", "image/jpeg"
-                                ),
+                            # Upload image to Gemini via the AI Gateway (ai://vision).
+                            # We need raw bytes + mime for the gateway's image_url format.
+                            image_bytes = media_response.content
+                            image_mime = media_response.headers.get(
+                                "content-type", "image/jpeg"
                             )
 
                             # Build vision prompt using structured approach
@@ -3395,19 +3408,17 @@ Use `/quiet` to reduce my chattiness!
                                 f"OCR request: {is_ocr_request}"
                             )
 
-                            vision_response = self.genai_client.models.generate_content(
-                                model="gemini-2.5-flash",
-                                contents=[image_part, vision_prompt],  # ✅ Image first (per Google docs)
-                                config=types.GenerateContentConfig(
-                                    system_instruction=VISION_SYSTEM_INSTRUCTION,
-                                    temperature=0.1,  # ✅ Deterministic for OCR accuracy
-                                    max_output_tokens=2048,  # ✅ Handle dense menus/forms
-                                    response_mime_type="application/json",  # ✅ Structured output
-                                ),
+                            vision_response = await self._gateway_vision_call(
+                                image_bytes=image_bytes,
+                                mime_type=image_mime,
+                                prompt=vision_prompt,
+                                system_instruction=VISION_SYSTEM_INSTRUCTION,
+                                max_output_tokens=2048,
+                                temperature=0.1,
                             )
 
                             # Parse JSON response with graceful fallback
-                            raw_response = vision_response.text.strip()
+                            raw_response = vision_response.strip()
 
                             try:
                                 vision_data = json.loads(raw_response)
@@ -3510,29 +3521,25 @@ Use `/quiet` to reduce my chattiness!
                                 self.genai_client = genai.Client(api_key=self.config["gemini_api_key"])
 
                             if mime in GEMINI_NATIVE:
-                                # ✅ Send directly to Gemini — handles scanned PDFs, image docs, IC scans, receipts, contracts
+                                # ✅ Send via the AI Gateway (ai://vision) so the alias
+                                # policy in llm_gateway.yaml controls which provider
+                                # answers and we get 429/5xx fallback for free.
                                 try:
-                                    doc_part = gtypes.Part.from_bytes(
-                                        data=media_response.content,
-                                        mime_type=mime,
-                                    )
                                     user_q = content or "Summarise this document and extract all key information."
-                                    doc_response = self.genai_client.models.generate_content(
-                                        model="gemini-2.5-flash",
-                                        contents=[doc_part, user_q],
-                                        config=gtypes.GenerateContentConfig(
-                                            system_instruction=(
-                                                "You are an expert document analyst. "
-                                                "Extract and summarise all key information: "
-                                                "text, numbers, dates, names, tables, and any other content. "
-                                                "For scanned or image-based documents, perform OCR and extract all visible text. "
-                                                "Be thorough and structured."
-                                            ),
-                                            temperature=0.1,
-                                            max_output_tokens=3000,
+                                    doc_text = await self._gateway_vision_call(
+                                        image_bytes=media_response.content,
+                                        mime_type=mime,
+                                        prompt=user_q,
+                                        system_instruction=(
+                                            "You are an expert document analyst. "
+                                            "Extract and summarise all key information: "
+                                            "text, numbers, dates, names, tables, and any other content. "
+                                            "For scanned or image-based documents, perform OCR and extract all visible text. "
+                                            "Be thorough and structured."
                                         ),
+                                        max_output_tokens=3000,
+                                        temperature=0.1,
                                     )
-                                    doc_text = doc_response.text.strip()
                                     media_insight = f"📄 Document analysed ({filename}):\n{doc_text}"
                                     logger.info(f"✅ Gemini document analysis complete ({len(doc_text)} chars) — {filename}")
                                 except Exception as gemini_doc_err:
@@ -4904,250 +4911,273 @@ Use `/quiet` to reduce my chattiness!
                     continue
         # === END MiniMax PRIMARY ===
 
-        # Try Gemini 2.5 Flash (with RoundRobinRotator for 429 handling)
+        # Try Gemini 2.5 Flash via the AI Gateway v2 (llm.complete).
+        # The gateway handles 429/5xx -> next fallback, daily budget, structured
+        # logging, and the Gemini key rotator underneath. The callsite stays
+        # provider-agnostic — only the alias is named.
         try:
-            from google import genai
-            from google.genai import types
+            from src.core.llm_gateway_v2 import (
+                llm as _llm_gateway,
+                BudgetExceeded as _BudgetExceeded,
+                NoProviderAvailable as _NoProviderAvailable,
+            )
 
-            # Get API key from rotator or fallback to config
-            api_key = None
-            if self.llm_rotator:
-                api_key = self.llm_rotator.get_next_key()
-            if not api_key:
-                api_key = self.config.get("gemini_api_key")
+            tenant_id = client_config.get("tenant_id") if client_config else None
 
-            if not api_key:
-                raise ValueError(
-                    "No Gemini API key available (GEMINI_API_KEY or GEMINI_API_KEYS)"
+            # Build function-calling tool list in OpenAI format. The gateway
+            # accepts tools=[{type: function, function: {name, description, parameters}}]
+            # and translates to Gemini's function_declarations shape internally.
+            _tools_opt = None
+            if (
+                hasattr(self, "function_caller")
+                and self.function_caller
+                and self.function_caller.enabled
+            ):
+                try:
+                    _funcs = self.function_caller.get_function_declarations(
+                        enabled_tools=client_config.get("enabled_tools")
+                        if client_config
+                        else None
+                    )
+                    if _funcs:
+                        _tools_opt = [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": f.get("name", ""),
+                                    "description": f.get("description", ""),
+                                    "parameters": f.get(
+                                        "parameters", {"type": "object"}
+                                    ),
+                                },
+                            }
+                            for f in _funcs
+                        ]
+                        logger.debug(
+                            f"🔧 {len(_funcs)} function declarations added via gateway"
+                        )
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not load function declarations: {e}")
+
+            # Build OpenAI-style messages from `_messages` (already includes
+            # system + history + user_message). The gateway accepts the same
+            # shape — no re-formatting needed.
+            _gateway_messages = list(_messages)
+
+            response = await _llm_gateway.complete(
+                "ai://reasoning",
+                _gateway_messages,
+                tools=_tools_opt,
+                temperature=0.7,
+                max_output_tokens=self.config.get("max_output_tokens", 1024),
+                tenant_id=tenant_id,
+            )
+            # Re-attach the .text attribute the rest of the function reads.
+            response_text = response.text or ""
+            response_function_calls = response.function_calls or []
+            # Save the gateway call's response for the post-tool second call.
+            response = SimpleNamespace(
+                text=response_text,
+                function_calls=response_function_calls,
+                fallback_reason=response.fallback_reason,
+            )
+
+            # ✅ FIX: Handle function calls if LLM decided to call tools
+            if response.function_calls:
+                logger.info(
+                    f"🔧 LLM called {len(response.function_calls)} function(s)"
                 )
 
-            max_retries = 3
-            last_error = None
+                # Convert dict-style function calls into the SimpleNamespace shape
+                # the existing _execute_function expects (.name, .args).
+                function_calls_found = [
+                    SimpleNamespace(name=fc["name"], args=fc.get("args", {}))
+                    for fc in response.function_calls
+                ]
 
-            for attempt in range(max_retries):
-                try:
-                    client = genai.Client(api_key=api_key)
-                    max_tokens = self.config.get("max_output_tokens", 1024)
+                # Execute function calls if any were found
+                if function_calls_found:
+                    logger.info(f"🔧 LLM called {len(function_calls_found)} function(s)")
 
-                    # ✅ FIX: Add function declarations so LLM can call tools (escalation, calendar, etc.)
-                    tools = None
-                    if hasattr(self, 'function_caller') and self.function_caller and self.function_caller.enabled:
+                    # Execute function calls
+                    tool_results = []
+                    for func_call in function_calls_found:
                         try:
-                            functions = self.function_caller.get_function_declarations(
-                                enabled_tools=client_config.get("enabled_tools") if client_config else None
-                            )
-                            if functions:
-                                tools = [types.Tool(function_declarations=functions)]
-                                logger.debug(f"🔧 {len(functions)} function declarations added to LLM")
+                            logger.info(f"🔧 Executing: {func_call.name}({func_call.args})")
+                            # Inject chat_jid into user_context so tools like escalate_to_human can access it
+                            tool_context = dict(client_config) if client_config else {}
+                            tool_context["chat_jid"] = chat_jid
+
+                            # === ActionGuard (Phase 3, flag-gated): consequential tools
+                            # do NOT auto-fire without a per-tenant 'allow' policy ===
+                            _guard_mode = "allow"
+                            if _agent_feature_enabled("ENABLE_ACTION_GUARD", tenant_id) and not _sandbox:
+                                try:
+                                    from src.core.action_guard import ActionGuard
+
+                                    _guard_mode = ActionGuard(self.db_conn).check(tenant_id, func_call.name)
+                                except Exception as _ge:
+                                    logger.debug(f"ActionGuard check skipped: {_ge}")
+                            if _sandbox:
+                                # SANDBOX: short-circuit BEFORE the real executor runs.
+                                logger.info(f"🧪 Sandbox: '{func_call.name}' NOT executed (test mode)")
+                                result = _sandbox_stub(func_call.name)
+                            elif _guard_mode != "allow":
+                                logger.info(f"🛡️ ActionGuard: '{func_call.name}' -> {_guard_mode} (not auto-executed)")
+                                result = {
+                                    "status": "blocked",
+                                    "guard": _guard_mode,
+                                    "message": (
+                                        f"Action '{func_call.name}' needs confirmation before it runs."
+                                        if _guard_mode == "confirm"
+                                        else f"Action '{func_call.name}' is not permitted for this tenant."
+                                    ),
+                                }
+                            else:
+                                result = await self.function_caller._execute_function(
+                                    func_call,
+                                    chat_jid,
+                                    user_context=tool_context
+                                )
+
+                            if result.get("status") == "success":
+                                logger.info(f"✅ Function {func_call.name} executed successfully")
+                                # Log successful tool call for dashboard visibility
+                                if tenant_id and self.db_conn and not _sandbox:
+                                    try:
+                                        self.db_conn.table("conversation_logs").insert({
+                                            "tenant_id": tenant_id,
+                                            "chat_jid": chat_jid,
+                                            "event_type": "tool_call",
+                                            "tool_name": func_call.name,
+                                            "success": True,
+                                            "metadata": {"args": dict(func_call.args)},
+                                        }).execute()
+                                    except Exception as log_err:
+                                        logger.debug(f"Could not log successful tool call: {log_err}")
+                            elif result.get("status") == "error":
+                                logger.error(f"❌ Function {func_call.name} failed: {result.get('error')}")
+                                # Log to database for dashboard visibility
+                                if tenant_id and self.db_conn and not _sandbox:
+                                    try:
+                                        self.db_conn.table("conversation_logs").insert({
+                                            "tenant_id": tenant_id,
+                                            "chat_jid": chat_jid,
+                                            "event_type": "tool_failure",
+                                            "tool_name": func_call.name,
+                                            "success": False,
+                                            "error_message": str(result.get('error')),
+                                        }).execute()
+                                    except Exception as log_err:
+                                        logger.debug(f"Could not log tool failure: {log_err}")
+
+
+                            tool_results.append({
+                                "status": result.get("status"),
+                                "message": result.get("error") if result.get("error") else "Success",
+                                "data": result
+                            })
+
                         except Exception as e:
-                            logger.warning(f"⚠️ Could not load function declarations: {e}")
-
-                    config_params = {
-                        "temperature": 0.7,
-                        "max_output_tokens": max_tokens,
-                        "system_instruction": system_instruction,
-                    }
-                    if tools:
-                        config_params["tools"] = tools
-
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=full_context,
-                        config=types.GenerateContentConfig(**config_params),
-                    )
-
-                    # ✅ FIX: Handle function calls if LLM decided to call tools
-                    tenant_id = client_config.get("tenant_id") if client_config else None
-                    if response.candidates and len(response.candidates) > 0:
-                        candidate = response.candidates[0]
-
-                        # ✅ CRITICAL FIX: Gemini returns function calls in content.parts, NOT candidate.function_calls
-                        function_calls_found = []
-                        if hasattr(candidate, 'content') and candidate.content and hasattr(candidate.content, 'parts'):
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'function_call') and part.function_call:
-                                    function_calls_found.append(part.function_call)
-
-                        # Execute function calls if any were found
-                        if function_calls_found:
-                            logger.info(f"🔧 LLM called {len(function_calls_found)} function(s)")
-
-                            # Execute function calls
-                            tool_results = []
-                            for func_call in function_calls_found:
+                            logger.error(f"❌ Error executing function {func_call.name}: {e}")
+                            # Log failure to database
+                            if tenant_id and self.db_conn and not _sandbox:
                                 try:
-                                    logger.info(f"🔧 Executing: {func_call.name}({func_call.args})")
-                                    # Inject chat_jid into user_context so tools like escalate_to_human can access it
-                                    tool_context = dict(client_config) if client_config else {}
-                                    tool_context["chat_jid"] = chat_jid
-
-                                    # === ActionGuard (Phase 3, flag-gated): consequential tools
-                                    # do NOT auto-fire without a per-tenant 'allow' policy ===
-                                    _guard_mode = "allow"
-                                    if _agent_feature_enabled("ENABLE_ACTION_GUARD", tenant_id) and not _sandbox:
-                                        try:
-                                            from src.core.action_guard import ActionGuard
-
-                                            _guard_mode = ActionGuard(self.db_conn).check(tenant_id, func_call.name)
-                                        except Exception as _ge:
-                                            logger.debug(f"ActionGuard check skipped: {_ge}")
-                                    if _sandbox:
-                                        # SANDBOX: short-circuit BEFORE the real executor runs.
-                                        logger.info(f"🧪 Sandbox: '{func_call.name}' NOT executed (test mode)")
-                                        result = _sandbox_stub(func_call.name)
-                                    elif _guard_mode != "allow":
-                                        logger.info(f"🛡️ ActionGuard: '{func_call.name}' -> {_guard_mode} (not auto-executed)")
-                                        result = {
-                                            "status": "blocked",
-                                            "guard": _guard_mode,
-                                            "message": (
-                                                f"Action '{func_call.name}' needs confirmation before it runs."
-                                                if _guard_mode == "confirm"
-                                                else f"Action '{func_call.name}' is not permitted for this tenant."
-                                            ),
-                                        }
-                                    else:
-                                        result = await self.function_caller._execute_function(
-                                            func_call,
-                                            chat_jid,
-                                            user_context=tool_context
-                                        )
-
-                                    if result.get("status") == "success":
-                                        logger.info(f"✅ Function {func_call.name} executed successfully")
-                                        # Log successful tool call for dashboard visibility
-                                        if tenant_id and self.db_conn and not _sandbox:
-                                            try:
-                                                self.db_conn.table("conversation_logs").insert({
-                                                    "tenant_id": tenant_id,
-                                                    "chat_jid": chat_jid,
-                                                    "event_type": "tool_call",
-                                                    "tool_name": func_call.name,
-                                                    "success": True,
-                                                    "metadata": {"args": dict(func_call.args)},
-                                                }).execute()
-                                            except Exception as log_err:
-                                                logger.debug(f"Could not log successful tool call: {log_err}")
-                                    elif result.get("status") == "error":
-                                        logger.error(f"❌ Function {func_call.name} failed: {result.get('error')}")
-                                        # Log to database for dashboard visibility
-                                        if tenant_id and self.db_conn and not _sandbox:
-                                            try:
-                                                self.db_conn.table("conversation_logs").insert({
-                                                    "tenant_id": tenant_id,
-                                                    "chat_jid": chat_jid,
-                                                    "event_type": "tool_failure",
-                                                    "tool_name": func_call.name,
-                                                    "success": False,
-                                                    "error_message": str(result.get('error')),
-                                                }).execute()
-                                            except Exception as log_err:
-                                                logger.debug(f"Could not log tool failure: {log_err}")
+                                    self.db_conn.table("conversation_logs").insert({
+                                        "tenant_id": tenant_id,
+                                        "chat_jid": chat_jid,
+                                        "event_type": "tool_failure",
+                                        "tool_name": func_call.name,
+                                        "success": False,
+                                        "error_message": str(e),
+                                    }).execute()
+                                except Exception as log_err:
+                                    logger.debug(f"Could not log tool failure: {log_err}")
 
 
-                                    tool_results.append({
-                                        "status": result.get("status"),
-                                        "message": result.get("error") if result.get("error") else "Success",
-                                        "data": result
-                                    })
+                            tool_results.append({
+                                "status": "error",
+                                "error": str(e)
+                            })
 
-                                except Exception as e:
-                                    logger.error(f"❌ Error executing function {func_call.name}: {e}")
-                                    # Log failure to database
-                                    if tenant_id and self.db_conn and not _sandbox:
-                                        try:
-                                            self.db_conn.table("conversation_logs").insert({
-                                                "tenant_id": tenant_id,
-                                                "chat_jid": chat_jid,
-                                                "event_type": "tool_failure",
-                                                "tool_name": func_call.name,
-                                                "success": False,
-                                                "error_message": str(e),
-                                            }).execute()
-                                        except Exception as log_err:
-                                            logger.debug(f"Could not log tool failure: {log_err}")
-
-
-                                    tool_results.append({
-                                        "status": "error",
-                                        "error": str(e)
-                                    })
-
-                            # Send tool results back to Gemini for a final natural language response
-                            import json
-                            full_context += f"\n\nTool Execution Results:\n{json.dumps(tool_results)}"
-
-                            # === TrajectoryLog (Phase 3, flag-gated): record the agent's tool steps ===
-                            if _agent_feature_enabled("ENABLE_AGENT_TRAJECTORY", tenant_id) and chat_jid and not _sandbox:
-                                try:
-                                    from src.core.trajectory_log import TrajectoryLog
-
-                                    _steps = [
-                                        {
-                                            "tool": fc.name,
-                                            "args": dict(fc.args) if getattr(fc, "args", None) else {},
-                                            "result": tr,
-                                        }
-                                        for fc, tr in zip(function_calls_found, tool_results)
-                                    ]
-                                    TrajectoryLog(self.db_conn).record(tenant_id, chat_jid, _steps)
-                                except Exception as _tle:
-                                    logger.debug(f"trajectory log skipped: {_tle}")
-                            # === END TrajectoryLog ===
-
-                            logger.info("🔧 Sending tool execution results to Gemini for final response...")
-                            response = client.models.generate_content(
-                                model="gemini-2.5-flash",
-                                contents=full_context,
-                                config=types.GenerateContentConfig(**config_params),
-                            )
-
-                    logger.info("✅ Response generated via Gemini 2.5 Flash")
-
-                    # ✅ FIX: Handle case where response only has function calls (no text)
-                    if response.text:
-                        _reply = response.text.strip()
-                    else:
-                        # Function calls executed, return confirmation
-                        logger.info("ℹ️ Response contained only function calls, returning confirmation")
-                        _reply = "I've processed your request."
-
-                    # === Agent memory WRITE (Phase 1, flag-gated; rolling summary, no extra LLM call) ===
-                    if _agent_feature_enabled("ENABLE_AGENT_MEMORY", tenant_id) and chat_jid and not _sandbox:
+                    # === TrajectoryLog (Phase 3, flag-gated): record the agent's tool steps ===
+                    if _agent_feature_enabled("ENABLE_AGENT_TRAJECTORY", tenant_id) and chat_jid and not _sandbox:
                         try:
-                            from src.core.agent_memory import MemoryStore
+                            from src.core.trajectory_log import TrajectoryLog
 
-                            _ms = MemoryStore(self.db_conn)
-                            _prev = _ms.get(tenant_id, chat_jid)
-                            _rolling = (
-                                f"{_prev.get('summary', '')} | U:{user_message} B:{_reply}"
-                            ).strip()[-1500:]
-                            _ms.update(tenant_id, chat_jid, _prev.get("facts", {}) or {}, _rolling)
-                        except Exception as _mwe:
-                            logger.debug(f"agent memory write skipped: {_mwe}")
-                    # === END agent memory WRITE ===
+                            _steps = [
+                                {
+                                    "tool": fc.name,
+                                    "args": dict(fc.args) if getattr(fc, "args", None) else {},
+                                    "result": tr,
+                                }
+                                for fc, tr in zip(function_calls_found, tool_results)
+                            ]
+                            TrajectoryLog(self.db_conn).record(tenant_id, chat_jid, _steps)
+                        except Exception as _tle:
+                            logger.debug(f"trajectory log skipped: {_tle}")
+                    # === END TrajectoryLog ===
 
-                    return _reply
-                except Exception as err:
-                    last_error = err
-                    err_str = str(err).lower()
-                    # 429 Resource Exhausted - mark key and retry with next
-                    if (
-                        "429" in err_str
-                        or "resource exhausted" in err_str
-                        or "quota" in err_str
-                        or "rate limit" in err_str
-                    ) and self.llm_rotator:
-                        self.llm_rotator.mark_rate_limited(api_key)
-                        next_key = self.llm_rotator.get_next_key()
-                        if next_key and next_key != api_key:
-                            api_key = next_key
-                            logger.info(
-                                "🔄 429 detected, retrying with next API key..."
-                            )
-                            continue
-                    raise last_error
+                    # Send tool results back through the gateway for the final
+                    # natural-language reply. The same ai://reasoning chain handles
+                    # 429/5xx fallback so a temporary blip doesn't kill the turn.
+                    logger.info("🔧 Sending tool execution results to gateway for final response...")
+                    import json
+                    _followup_messages = list(_gateway_messages) + [
+                        {
+                            "role": "user",
+                            "content": f"Tool Execution Results:\n{json.dumps(tool_results)}",
+                        }
+                    ]
+                    followup = await _llm_gateway.complete(
+                        "ai://reasoning",
+                        _followup_messages,
+                        tools=_tools_opt,
+                        temperature=0.7,
+                        max_output_tokens=self.config.get("max_output_tokens", 1024),
+                        tenant_id=tenant_id,
+                    )
+                    response.text = followup.text
 
+            logger.info(
+                f"✅ Response via gateway (provider={response.fallback_reason or 'primary'})"
+            )
+
+            # ✅ FIX: Handle case where response only has function calls (no text)
+            if response.text:
+                _reply = response.text.strip()
+            else:
+                # Function calls executed, return confirmation
+                logger.info("ℹ️ Response contained only function calls, returning confirmation")
+                _reply = "I've processed your request."
+
+            # === Agent memory WRITE (Phase 1, flag-gated; rolling summary, no extra LLM call) ===
+            if _agent_feature_enabled("ENABLE_AGENT_MEMORY", tenant_id) and chat_jid and not _sandbox:
+                try:
+                    from src.core.agent_memory import MemoryStore
+
+                    _ms = MemoryStore(self.db_conn)
+                    _prev = _ms.get(tenant_id, chat_jid)
+                    _rolling = (
+                        f"{_prev.get('summary', '')} | U:{user_message} B:{_reply}"
+                    ).strip()[-1500:]
+                    _ms.update(tenant_id, chat_jid, _prev.get("facts", {}) or {}, _rolling)
+                except Exception as _mwe:
+                    logger.debug(f"agent memory write skipped: {_mwe}")
+            # === END agent memory WRITE ===
+
+            return _reply
+
+        except _BudgetExceeded as budget_err:
+            # Daily alias budget exhausted. Tell the user and let the rest of
+            # the fallback chain in the function (MiniMax, OpenAI direct) try.
+            logger.warning(
+                f"⚠️ ai://reasoning budget exceeded: {budget_err}; falling through to legacy paths"
+            )
+        except _NoProviderAvailable as npa_err:
+            logger.warning(
+                f"⚠️ No gateway provider available: {npa_err}; falling through to legacy paths"
+            )
         except Exception as gemini_error:
             logger.warning(
                 f"⚠️ Gemini failed ({gemini_error}), trying AI gateway fallback..."
@@ -5218,6 +5248,44 @@ Use `/quiet` to reduce my chattiness!
                     f"❌ All AI providers failed. Gemini: {gemini_error}, OpenAI: {openai_error}"
                 )
                 return "I apologize, but I'm having trouble processing your request right now. Please try again in a moment or type '@bijou escalate' to speak with a human agent."
+
+    async def _gateway_vision_call(
+        self,
+        image_bytes: bytes,
+        mime_type: str,
+        prompt: str,
+        system_instruction: str,
+        max_output_tokens: int = 2048,
+        temperature: float = 0.1,
+    ) -> str:
+        """
+        Vision call via the AI Gateway (ai://vision). Encodes the image as a
+        data: URL and passes it through llm.complete() so the policy in
+        llm_gateway.yaml controls which provider answers. Provider-agnostic
+        — no hardcoded `genai_client` here.
+        """
+        import base64
+
+        from src.core.llm_gateway_v2 import llm as _llm_gateway
+
+        data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+        messages = [
+            {"role": "system", "content": system_instruction},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": prompt},
+                ],
+            },
+        ]
+        result = await _llm_gateway.complete(
+            "ai://vision",
+            messages,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
+        return result.text
 
     def _enforce_short_message(self, response: str) -> str:
         """

@@ -1,0 +1,223 @@
+# =============================================================================
+# Bijou AI Gateway — Stable Alias Configuration
+# =============================================================================
+# This file is the single source of truth for which model answers which kind of
+# request. NO Python file should hardcode a model or provider name. New features
+# call `await llm.complete("ai://fast", messages, ...)` — never a provider.
+#
+# Schema (per alias):
+#   primary:           { provider, model, max_output_tokens, temperature }
+#   fallbacks:         ordered list — tried only if primary 429/500/502/503/504
+#   privacy:           "standard" (any provider OK) | "strict" (no OpenRouter /
+#                      free pools — PDPA-sensitive prompts only hit paid/private
+#                      providers we control)
+#   daily_budget_usd:  soft cap. Once daily spend exceeds this, the alias starts
+#                      returning 429 BudgetExceeded with Retry-After.
+#   description:       human-readable purpose (shown in /api/llm/aliases)
+#
+# Privacy levels:
+#   - strict:   Primary + fallbacks must BOTH be on the strict-providers list
+#               (gemini direct + openai direct). OpenRouter and other multi-tenant
+#               aggregators are NEVER used. For PDPA-grade customer PII.
+#   - standard: OpenRouter and free-pool providers are allowed as fallbacks.
+#               For normal conversation, lead capture, KB lookups.
+#
+# Cost fields:
+#   cost_per_1k_input_usd / cost_per_1k_output_usd — used by llm_gateway_v2 to
+#   log `cost_usd` to the llm_usage table. Set to 0.0 when unknown.
+#
+# Adding a new provider:
+#   1. Implement its adapter in llm_gateway_v2._PROVIDER_DISPATCH.
+#   2. Reference it by `provider: <name>` in any alias below.
+#   3. Add its env-var name to the provider's env_keys list (the gateway reads
+#      keys from os.environ and gracefully degrades when missing).
+#
+# Adding a new alias:
+#   Copy any block below, change the key (the `ai://...` string), pick primary +
+#   fallbacks, set budget. New code calls `await llm.complete("ai://your-new",
+#   messages)`. No code changes needed in the gateway — it's data-driven.
+# =============================================================================
+
+aliases:
+
+  # ---------------------------------------------------------------------------
+  # ai://fast — routine replies, low temperature, the default for most user
+  # chat turns. Cheap and quick. NOT for tool calling or PDPA-sensitive data.
+  # ---------------------------------------------------------------------------
+  ai://fast:
+    description: "Default chat replies — short, friendly, low-latency."
+    primary:
+      provider: gemini
+      model: gemini-2.5-flash
+      max_output_tokens: 512
+      temperature: 0.7
+    fallbacks:
+      - provider: openrouter
+        model: "google/gemini-2.5-flash"
+        max_output_tokens: 512
+        temperature: 0.7
+      - provider: openai_compatible
+        model: "gpt-4o-mini"
+        max_output_tokens: 512
+        temperature: 0.7
+    privacy: standard
+    daily_budget_usd: 25.00
+
+  # ---------------------------------------------------------------------------
+  # ai://reasoning — for tool-calling (agent loop, calendar booking, escalation)
+  # and complex KB lookups. Higher max_tokens, slightly higher temperature for
+  # creative tool selection.
+  # ---------------------------------------------------------------------------
+  ai://reasoning:
+    description: "Agent loop + tool-calling + complex KB retrieval."
+    primary:
+      provider: gemini
+      model: gemini-2.5-flash
+      max_output_tokens: 2048
+      temperature: 0.7
+    fallbacks:
+      - provider: openrouter
+        model: "google/gemini-2.5-flash"
+        max_output_tokens: 2048
+        temperature: 0.7
+      - provider: openai_compatible
+        model: "gpt-4o-mini"
+        max_output_tokens: 2048
+        temperature: 0.7
+    privacy: standard
+    daily_budget_usd: 50.00
+
+  # ---------------------------------------------------------------------------
+  # ai://extract — for structured JSON extraction (handover detection, lead
+  # analysis, emotion tagging). Low max_tokens, very low temperature for
+  # determinism. Output is parsed as JSON.
+  # ---------------------------------------------------------------------------
+  ai://extract:
+    description: "Structured JSON extraction — handover, leads, emotion."
+    primary:
+      provider: gemini
+      model: gemini-2.5-flash
+      max_output_tokens: 256
+      temperature: 0.2
+    fallbacks:
+      - provider: openrouter
+        model: "google/gemini-2.5-flash"
+        max_output_tokens: 256
+        temperature: 0.2
+      - provider: openai_compatible
+        model: "gpt-4o-mini"
+        max_output_tokens: 256
+        temperature: 0.2
+    privacy: standard
+    daily_budget_usd: 10.00
+
+  # ---------------------------------------------------------------------------
+  # ai://private — PDPA-sensitive. Customer PII, account numbers, contact
+  # details. MUST NOT fall back to OpenRouter (logs on their side) or any
+  # free-pool aggregator. Only paid-direct providers we control are allowed.
+  # If no strict provider has a key set, the alias returns an error — better
+  # to refuse than to leak.
+  # ---------------------------------------------------------------------------
+  ai://private:
+    description: "PDPA-sensitive — customer PII. Strict-only providers."
+    primary:
+      provider: gemini
+      model: gemini-2.5-flash
+      max_output_tokens: 1024
+      temperature: 0.3
+    fallbacks:
+      - provider: openai_compatible
+        model: "gpt-4o-mini"
+        max_output_tokens: 1024
+        temperature: 0.3
+    privacy: strict
+    daily_budget_usd: 20.00
+
+  # ---------------------------------------------------------------------------
+  # ai://helpdesk — for /api/help/chat (in-product support widget). Low
+  # temperature, short replies, no tool calling. Smaller budget since it's
+  # a side-channel that should not eat into the main conversation budget.
+  # ---------------------------------------------------------------------------
+  ai://helpdesk:
+    description: "In-product /api/help/chat support widget."
+    primary:
+      provider: gemini
+      model: gemini-2.5-flash
+      max_output_tokens: 512
+      temperature: 0.4
+    fallbacks:
+      - provider: openrouter
+        model: "google/gemini-2.5-flash"
+        max_output_tokens: 512
+        temperature: 0.4
+      - provider: openai_compatible
+        model: "gpt-4o-mini"
+        max_output_tokens: 512
+        temperature: 0.4
+    privacy: standard
+    daily_budget_usd: 5.00
+
+  # ---------------------------------------------------------------------------
+  # ai://vision — for image / document understanding (vision + multimodal).
+  # Uses a vision-capable primary; falls back to text-only if needed (the
+  # caller is expected to degrade gracefully on the no-vision path).
+  # ---------------------------------------------------------------------------
+  ai://vision:
+    description: "Vision + multimodal — image / document understanding."
+    primary:
+      provider: gemini
+      model: gemini-2.5-flash
+      max_output_tokens: 1024
+      temperature: 0.3
+    fallbacks:
+      - provider: openrouter
+        model: "google/gemini-2.5-flash"
+        max_output_tokens: 1024
+        temperature: 0.3
+    privacy: standard
+    daily_budget_usd: 10.00
+
+# =============================================================================
+# Provider configuration
+# -----------------------------------------------------------------------------
+# Each provider lists the env var names that hold its API key. The gateway
+# gracefully degrades if any key is missing — the provider just becomes
+# unavailable. Multiple env-var aliases (separated by `|`) are tried in order
+# for backwards compatibility.
+# =============================================================================
+providers:
+  gemini:
+    type: gemini
+    env_keys: "GEMINI_API_KEYS|GEMINI_API_KEY|GOOGLE_API_KEY"
+    base_url: "https://generativelanguage.googleapis.com"
+
+  openai_compatible:
+    type: openai_compatible
+    env_keys: "OPENAI_API_KEY"
+    base_url: "https://api.openai.com/v1"
+    # A second base_url is checked when the first 401/403s (cheap, paid-direct).
+
+  openrouter:
+    type: openai_compatible
+    env_keys: "OPENROUTER_API_KEY"
+    base_url: "https://openrouter.ai/api/v1"
+    # OpenRouter is a multi-tenant aggregator. NOT in strict-privacy allow-list.
+    # If OPENROUTER_API_KEY is unset, all openrouter fallback entries log
+    # "no fallback available" and the alias skips them.
+
+# =============================================================================
+# Cost observability — kept inline for transparency.
+# llm_gateway_v2 uses cost_per_1k_input/output to log cost_usd per request.
+# Numbers below are from each provider's published pricing (Aug 2026).
+# Update quarterly or when a provider changes pricing.
+# =============================================================================
+cost_per_1k:
+  gemini/gemini-2.5-flash:
+    input_usd: 0.000075
+    output_usd: 0.0003
+  openai_compatible/gpt-4o-mini:
+    input_usd: 0.00015
+    output_usd: 0.0006
+  openrouter/google/gemini-2.5-flash:
+    input_usd: 0.0001
+    output_usd: 0.0004

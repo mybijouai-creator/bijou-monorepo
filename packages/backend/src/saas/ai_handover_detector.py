@@ -260,12 +260,9 @@ def detect_handover_intent(message: str, gemini_api_key: str = None) -> Tuple[bo
         return (False, "Emoji reaction only", "none")
 
     try:
-        # Use module-level genai (supports test mocking via @patch)
-        _genai = genai
-        if _genai is None:  # pragma: no cover
-            return _keyword_fallback(message_lower)
-
-        client = _genai.Client(api_key=api_key)
+        # AI Gateway v2 — alias-based, no direct provider name.
+        # ai://extract is the structured-output alias (low temperature, JSON).
+        from src.core.llm_gateway_v2 import llm as _llm_gateway, llm as _llm_gw_module
 
         prompt = f"""You are analyzing whether a customer EXPLICITLY wants to speak to a HUMAN (owner/manager/staff), NOT just asking a question to AI.
 
@@ -318,19 +315,26 @@ Respond ONLY with JSON:
 
 Be EXTREMELY CONSERVATIVE. When in doubt, return wants_human: false."""
 
-        # ⚡ CIRCUIT BREAKER: Protect against Gemini API failures
-        # Hard 5-second timeout prevents indefinite hangs
+        # ⚡ CIRCUIT BREAKER: Protect against AI Gateway failures
+        # Hard 5-second timeout prevents indefinite hangs. The gateway itself
+        # handles 429/5xx fallback across providers (gemini -> openrouter ->
+        # openai_compatible) per the ai://extract policy in llm_gateway.yaml.
         try:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=prompt
+            import asyncio
+            response = asyncio.run(
+                _llm_gateway.complete(
+                    "ai://extract",
+                    [{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_output_tokens=256,
+                )
             )
         except Exception as api_error:
-            logger.error(f"⚠️ Gemini API call failed: {api_error}")
+            logger.error(f"⚠️ AI Gateway call failed: {api_error}")
             # Fallback to keyword-based detection (use full phrase list, not circuit breaker)
             return _keyword_fallback(message_lower)
 
-        response_text = response.text.strip()
+        response_text = (response.text or "").strip()
 
         # Extract JSON from response (sometimes AI adds markdown formatting)
         json_match = re.search(r'\{[^{}]+\}', response_text, re.DOTALL)
