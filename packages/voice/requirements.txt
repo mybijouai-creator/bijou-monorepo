@@ -1,0 +1,33 @@
+# Bijou Voice concierge — Python deps
+# Mirror packages/backend/requirements.txt for the subset the voice
+# service needs. Keep this list minimal — voice is a slim service.
+#
+# Pin versions to match the backend so type stubs resolve.
+
+# Web framework + ASGI
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# HTTP client (Telnyx REST, Bijou backend service-to-service)
+httpx==0.27.2
+
+# Supabase (shared_context reads + tenant config reads)
+supabase==2.8.1
+
+# JWT for service-to-service auth (BIJOU_API_KEY signed)
+PyJWT==2.9.0
+
+# Logging
+structlog==24.4.0
+
+# Voice / audio
+# (we don't ship TTS/STT in the voice service — Telnyx handles both
+# via the call control API. The Python side just orchestrates.)
+
+# Test deps
+pytest==8.3.3
+pytest-asyncio==0.24.0
+httpx[http2]==0.27.2
+respx==0.21.1

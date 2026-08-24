@@ -124,6 +124,40 @@ services:
       - "3000:3000"
     profiles: ["preview"]  # only deploy with --profile preview
 
+  # ─── Voice concierge (Telnyx, optional) ────────────────────────────
+  # The voice service lands after the backend + bridge are healthy.
+  # See packages/voice/AGENT.md for the design + A2A contract, and
+  # issue #28 for the actual wiring work. Disabled by default — start
+  # with the backend + bridge first, then `docker compose up voice` once
+  # Telnyx keys are set.
+  voice:
+    build:
+      context: .
+      dockerfile: Dockerfile.voice
+    image: bijou-voice:latest
+    container_name: bijou-voice
+    restart: unless-stopped
+    ports:
+      - "8100:8100"
+    environment:
+      <<: *common-env
+      # Voice-specific
+      BIJOU_BACKEND_URL: "http://backend:8080"
+      TELNYX_API_KEY: "${TELNYX_API_KEY:-}"
+      TELNYX_PUBLIC_KEY: "${TELNYX_PUBLIC_KEY:-}"
+      TELNYX_WEBHOOK_SECRET: "${TELNYX_WEBHOOK_SECRET:-}"
+      VOICE_DEFAULT_VOICE: "${VOICE_DEFAULT_VOICE:-en-US-Neural2-A}"
+      VOICE_MAX_CALL_SECONDS: "${VOICE_MAX_CALL_SECONDS:-900}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      - backend
+    profiles: ["voice"]  # only deploy with --profile voice
+
 volumes:
   backend-uploads:
     driver: local
