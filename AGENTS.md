@@ -267,6 +267,53 @@ cd packages/bridge && go vet ./...
 These are real mistakes from the project's history (in `topics/` + memory). Don't repeat them.
 
 - ❌ Don't change env var names in prod without fall-back. The `MINIMAX_API_KEY` → `minimax no API key` chain failure on 2026-08-05 was a CRLF `.env` parser bug; never change parsers in deployed code without testing both LF and CRLF inputs.
+
+---
+
+## 9b. Admin Frontend (added 2026-08-24)
+
+The Bijou **Admin Console** lives at `static/admin.html` and is served by
+the new `src/saas/admin_frontend_api.py` router (mounted at
+`/admin/api/*`). It is **platform-facing** (the owner / owner's agent
+team) — distinct from the tenant-facing dashboard at
+`static/dashboard.html`.
+
+| Surface | Path | Purpose |
+|---|---|---|
+| **Admin UI** | `/static/admin.html` | React/JSX console: health, tenants, users, billing, migrations, API keys, audit log |
+| **Admin API** | `/admin/api/*` | 12 endpoints, gated on `public.platform_admins` (JWT) or `X-Admin-Key` (MCP) |
+| **Admin MCP** | `src/core/admin_mcp_server.py` | 15 tools that wrap the Admin API for the owner's autonomous agent team |
+| **Audit log** | `public.audit_log` | Append-only trail of every sensitive action; reviewed via the Audit Log tab |
+
+**Key invariants** (added 2026-08-24):
+- `admin.html` requires the user to be in `public.platform_admins` OR
+  present `X-Admin-Key: <ADMIN_API_KEY>`. The legacy `/api/admin/*`
+  surface (shared-secret only, 5 endpoints) is preserved for back-compat.
+- **Never echo real secret values.** `/admin/api/keys` returns
+  `***<last4>` + `configured: bool` only. Stripe keys additionally
+  carry `mode: test|live`.
+- **Every sensitive action writes an `audit_log` row** with
+  `actor_type ∈ {platform_admin, mcp, service}`, the action name
+  (`user.impersonate`, `migration.apply`, `billing.refund`, …), the
+  target, and the request IP/UA.
+- The migration that creates `platform_admins` and `audit_log` is
+  `migrations-py/add_admin_console.sql` (applied by the existing
+  `scripts/apply_migrations.py` flow). It is idempotent (`CREATE TABLE
+  IF NOT EXISTS`).
+- `force=True` on `/admin/api/migrations/apply` is **rejected in
+  v0.1**. The owner must run the CLI `--force` path from a terminal
+  with eyes on the diff.
+- To grant a user admin access, run in the Supabase SQL editor:
+  ```sql
+  insert into public.platform_admins (user_id, email)
+  values ('<auth.users.id>', '<email>');
+  ```
+
+**For the agent team (MCP)**: import `TOOLS` from
+`src.core.admin_mcp_server` and register each entry. The MCP server
+calls `/admin/api/*` with `X-Admin-Key` so it does NOT need a Supabase
+JWT; set `ADMIN_API_KEY` and `BIJOU_ADMIN_BASE_URL` in the agent
+host's environment.
 - ❌ Don't trust cron reports about "548 inserted" when the actual DB count is 0. The Overpass scout was silently failing for 7+ days because `ignoreDuplicates: true` returned `data: []` with no error. Always check the actual count, not the script's own log.
 - ❌ Don't use the same `i18n.ts` string for both pricing and features blocks. The KB doc count has been a 1-line fix for 9+ days because the same file says "200 documents" in one place and "50 FAQs + 2 documents" in another.
 - ❌ Don't `git reset --hard origin/master` after a squash merge. The squash bundles everything into one commit on `origin/master`; your local feature branch tip is NOT in that commit. Recovery: `git checkout <old-sha> -- <files>`, then commit.

@@ -393,6 +393,160 @@ class StripePaymentService:
             logger.error(f"Failed to cancel subscription: {e}", exc_info=True)
             return False
 
+    # ─── Refunds (added 2026-08-24, admin frontend) ────────────────────
+    # The admin UI (and the MCP server) need to issue a partial or full
+    # refund without the owner having to open the Stripe Dashboard.
+    # Records the refund as a row in `payment_transactions` with status
+    # 'refunded' so the admin billing table stays consistent.
+    #
+    # SAFETY:
+    # - We accept either a charge id (ch_*) or a payment_intent id
+    #   (pi_*). Stripe's Refund API accepts both, but we validate shape.
+    # - Partial refunds: pass `amount_cents`. None = full refund.
+    # - We never echo the full Stripe response to the caller; only the
+    #   fields the admin UI needs to render the success screen.
+    # - We do NOT touch `tenants.subscription_status`. A refund is
+    #   orthogonal to the subscription — cancelling after a refund is
+    #   a separate action the operator takes from the same UI.
+
+    def refund_charge(
+        self,
+        charge_or_pi_id: str,
+        amount_cents: Optional[int] = None,
+        reason: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Issue a Stripe refund.
+
+        Args:
+            charge_or_pi_id: A charge id (`ch_…`) or a payment-intent id
+                (`pi_…`). Shape-validated; anything else returns None.
+            amount_cents: Partial-refund amount in the smallest currency
+                unit. None = full refund.
+            reason: One of `duplicate`, `fraudulent`, `requested_by_customer`.
+                None = no `reason` field sent to Stripe.
+            tenant_id: Optional. If given, the refund is recorded as a
+                row in `payment_transactions` against this tenant so
+                the admin billing view stays accurate.
+
+        Returns:
+            Dict with {refund_id, amount_cents, currency, status,
+            charge_id, payment_intent_id, tenant_id} on success, or
+            None on failure. The full Stripe refund object is
+            deliberately NOT included — only the fields the admin UI
+            needs to show "Refund issued: RM 49.00".
+        """
+        try:
+            if not (charge_or_pi_id or "").startswith(("ch_", "pi_")):
+                logger.error(
+                    "refund_charge: refusing to refund id with bad prefix: %r",
+                    charge_or_pi_id,
+                )
+                return None
+
+            params: Dict[str, Any] = {}
+            if charge_or_pi_id.startswith("ch_"):
+                params["charge"] = charge_or_pi_id
+            else:
+                params["payment_intent"] = charge_or_pi_id
+            if amount_cents is not None:
+                params["amount"] = int(amount_cents)
+            if reason:
+                params["reason"] = reason
+
+            refund = stripe.Refund.create(**params)
+
+            result = {
+                "refund_id": refund.id,
+                "amount_cents": refund.amount,
+                "currency": refund.currency,
+                "status": refund.status,
+                "charge_id": refund.charge,
+                "payment_intent_id": refund.payment_intent,
+                "tenant_id": tenant_id,
+            }
+            logger.info(
+                "✅ Refund issued: %s (amount=%d %s, tenant=%s)",
+                refund.id, refund.amount, refund.currency, tenant_id or "—",
+            )
+
+            # Mirror to payment_transactions for the admin UI's billing
+            # table to render consistently. Best-effort: a write failure
+            # here does NOT roll back the Stripe refund.
+            if tenant_id:
+                try:
+                    self._record_transaction(
+                        tenant_id=tenant_id,
+                        stripe_charge_id=refund.charge,
+                        stripe_payment_intent_id=refund.payment_intent,
+                        amount_cents=-int(refund.amount),  # negative = outflow
+                        currency=refund.currency,
+                        status="refunded",
+                        plan_name=None,
+                        billing_period=None,
+                        failure_message=f"refund {refund.id}"
+                        + (f" reason={reason}" if reason else ""),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "⚠️ Could not write refund to payment_transactions: %s", e
+                    )
+
+            return result
+        except Exception as e:
+            logger.error(
+                "❌ refund_charge failed (id=%s): %s",
+                charge_or_pi_id, e, exc_info=True,
+            )
+            return None
+
+    def list_recent_refunds(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """List recent refunds across all tenants (platform admin view).
+
+        Returns a denormalized list suitable for the admin billing
+        table. We pull from Stripe (the source of truth) and JOIN
+        against the local `tenants` table for the business_name.
+
+        The function never raises. On error it returns an empty list
+        so the admin UI can show "no refunds yet" instead of a 500.
+        """
+        try:
+            refunds = stripe.Refund.list(limit=limit)
+            out: List[Dict[str, Any]] = []
+            for r in refunds.data:
+                # Try to resolve a tenant via the charge → customer
+                tenant_business = None
+                try:
+                    if r.charge:
+                        ch = stripe.Charge.retrieve(r.charge)
+                        cust_id = ch.customer
+                        if cust_id:
+                            tres = (
+                                self.supabase.table("tenants")
+                                .select("id, business_name")
+                                .eq("stripe_customer_id", cust_id)
+                                .limit(1)
+                                .execute()
+                            )
+                            if tres.data:
+                                tenant_business = tres.data[0].get("business_name")
+                except Exception:
+                    pass
+                out.append({
+                    "refund_id": r.id,
+                    "amount_cents": r.amount,
+                    "currency": r.currency,
+                    "status": r.status,
+                    "reason": r.reason,
+                    "charge_id": r.charge,
+                    "created_at": r.created,
+                    "tenant_business_name": tenant_business,
+                })
+            return out
+        except Exception as e:
+            logger.error("list_recent_refunds failed: %s", e, exc_info=True)
+            return []
+
     def _handle_invoice_paid(self, invoice):
         """Handle successful invoice payment (recurring)"""
         try:

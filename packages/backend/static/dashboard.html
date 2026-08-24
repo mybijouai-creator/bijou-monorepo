@@ -7880,6 +7880,27 @@
         const toggleLang = () => setLang(l => { const nl = l==="en"?"my":"en"; localStorage.setItem("bijou_lang",nl); return nl; });
         const [installPrompt, setInstallPrompt] = useState(null);
         const [showInstallBanner, setShowInstallBanner] = useState(false);
+        // 2026-08-24: Bijou Admin Console visibility. We ask the new
+        // /admin/api/me endpoint whether the current user is a
+        // platform_admin. The default is false; we only render the
+        // "Admin" link in the top bar when the response says yes.
+        // The probe is one indexed SELECT on platform_admins + a
+        // JWT verify, both cheap. Failure = no link.
+        const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+        useEffect(() => {
+          let cancelled = false;
+          (async () => {
+            try {
+              const tok = (() => { try { return (JSON.parse(localStorage.getItem("sb_session") || "{}").access_token) || ""; } catch { return ""; } })();
+              if (!tok) return;
+              const r = await fetch("/admin/api/me", { headers: { Authorization: `Bearer ${tok}` } });
+              if (!r.ok) return;  // not an admin, or the table is missing — either way, no link
+              const j = await r.json();
+              if (!cancelled) setIsPlatformAdmin(j.is_platform_admin === true);
+            } catch { /* silent — admin link is a progressive enhancement */ }
+          })();
+          return () => { cancelled = true; };
+        }, []);
 
         // Signal Gem mute state — single source of truth is body[data-bj-audio]
         // (the controller writes it on toggle and reads it on init). React state
@@ -9319,6 +9340,25 @@
                     >
                       {lang==="en" ? "MY" : "EN"}
                     </button>
+                    {/* 2026-08-24: Admin Console link — only for platform_admins.
+                        Fetches /admin/api/me on mount to decide whether to render.
+                        Cheap (one indexed SELECT on platform_admins) and the
+                        fallback is just "hide the button" — the dashboard is
+                        fully usable without it. */}
+                    {isPlatformAdmin && (
+                      <a
+                        href="/static/admin.html"
+                        className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors"
+                        style={{
+                          background: "#E3B45715",
+                          color: "var(--premium)",
+                          border: "1px solid #E3B45740",
+                        }}
+                        title="Bijou Admin Console (platform owner)"
+                      >
+                        ⚙ Admin
+                      </a>
+                    )}
                     <button
                       onClick={async () => {
                         if (confirm("Are you sure you want to log out?")) {

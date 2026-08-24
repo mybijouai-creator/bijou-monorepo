@@ -18,8 +18,8 @@ either:
   - A pure-Python Postgres wire-protocol implementation as a last resort
     (NOT IMPLEMENTED — would need `pg8000` or similar)
 
-USAGE
-=====
+USAGE (CLI)
+===========
 
 1. Find your Supabase database connection string:
    - Supabase dashboard -> Project Settings -> Database -> Connection
@@ -46,6 +46,26 @@ USAGE
    ```bash
    python -m scripts.apply_migrations --dry-run
    ```
+
+USAGE (PROGRAMMATIC, FOR /admin/api/migrations/apply)
+=====================================================
+
+```python
+from scripts.apply_migrations import apply_migrations, get_db_url, discover_migrations
+
+result = apply_migrations(
+    db_url=get_db_url(None),         # from env
+    only="add_admin_console.sql",     # filename substring, or None for all pending
+    force=False,                      # ignore manifest
+    executor="psycopg2",              # or "psql"; auto-detected
+)
+# result = {
+#   "success": 1, "skipped": 0, "failed": 0,
+#   "applied": ["add_admin_console.sql"],
+#   "errors": [],
+#   "manifest": ["add_admin_console.sql", ...],
+# }
+```
 
 WHAT IT DOES
 ============
@@ -81,8 +101,8 @@ SAFETY
   `.supabase.com`).
 - `--dry-run` shows every file it would apply without touching the DB.
 
-EXIT CODES
-==========
+EXIT CODES (CLI)
+================
 
 0 = all migrations applied (or already in manifest)
 1 = bad arguments / missing db url
@@ -98,7 +118,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Bootstrap: allow `python apply_migrations.py` from anywhere
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
@@ -282,7 +302,148 @@ def _execute_sql_with_params(executor: str, db_url: str, sql: str, params: tuple
         _execute_sql(executor, db_url, formatted)
 
 
-# ─── Main ─────────────────────────────────────────────────────────────
+# ─── Programmatic API (used by /admin/api/migrations/apply) ──────────
+
+
+def apply_migrations(
+    db_url: str,
+    only: Optional[str] = None,
+    force: bool = False,
+    executor: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Apply migrations and return a structured result. Never sys.exit()s.
+
+    The function is the programmatic sibling of `main()`. It is used by
+    `/admin/api/migrations/apply` (so the admin UI and the MCP server
+    can run a migration without shelling out to a subprocess) and by
+    tests. The CLI `main()` below is now a thin wrapper around it.
+
+    Args:
+        db_url: Postgres connection string. Use `get_db_url(None)` to
+            resolve from env.
+        only: If set, only apply the migration whose filename contains
+            this substring. Used for targeted re-runs. None = apply
+            all pending.
+        force: If True, ignore the manifest and re-apply all matching
+            migrations. DANGEROUS — only enable if you know what
+            every migration does.
+        executor: 'psycopg2' or 'psql'. None = auto-detect via
+            `detect_executor()`. Tests can pass 'psql' to force the
+            subprocess path.
+
+    Returns:
+        Dict with keys:
+          - applied:  list of filenames that were just applied
+          - skipped:  list of filenames skipped (already in manifest)
+          - failed:   list of {filename, error} dicts
+          - manifest: list of ALL filenames currently in the manifest
+          - success_count, skipped_count, failed_count
+        Never raises on a per-migration failure — the caller gets the
+        partial result and decides what to do.
+    """
+    if not MIGRATIONS_DIR.is_dir():
+        raise RuntimeError(f"migrations dir not found: {MIGRATIONS_DIR}")
+
+    files = discover_migrations()
+    applied_now: List[str] = []
+    skipped: List[str] = []
+    failed: List[Dict[str, str]] = []
+
+    # Filter early for the --only case
+    if only:
+        before = len(files)
+        files = [f for f in files if only in f.name]
+        logger.info("apply_migrations: only=%r filter %d -> %d files", only, before, len(files))
+        if not files:
+            return {
+                "applied": [],
+                "skipped": [],
+                "failed": [{"filename": only, "error": f"no migration filename contains {only!r}"}],
+                "manifest": [],
+                "success_count": 0,
+                "skipped_count": 0,
+                "failed_count": 1,
+            }
+
+    if executor is None:
+        executor = detect_executor()
+    logger.info("apply_migrations: executor=%s force=%s", executor, force)
+
+    # Ensure manifest table exists, then read what's already applied
+    ensure_manifest(executor, db_url)
+    already = set() if force else get_applied(executor, db_url)
+    logger.info("apply_migrations: manifest has %d already-applied migrations", len(already))
+
+    for f in files:
+        if f.name in already and not force:
+            logger.info("  skip (already applied): %s", f.name)
+            skipped.append(f.name)
+            continue
+        sql = strip_header(f.read_text(encoding="utf-8"))
+        sha = file_sha256(f)
+        logger.info("  applying: %s (%d bytes, sha256=%s...)", f.name, len(sql), sha[:12])
+        try:
+            _execute_sql(executor, db_url, sql)
+            record_applied(executor, db_url, f.name, sha)
+            logger.info("    ok")
+            applied_now.append(f.name)
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            logger.error("    FAILED: %s", err)
+            failed.append({"filename": f.name, "error": err})
+            # Match CLI behavior: a failed migration aborts the rest
+            break
+
+    # Re-read manifest so the response always reflects the final state
+    try:
+        manifest = sorted(get_applied(executor, db_url))
+    except Exception:
+        manifest = sorted(already | set(applied_now))
+
+    return {
+        "applied": applied_now,
+        "skipped": skipped,
+        "failed": failed,
+        "manifest": manifest,
+        "success_count": len(applied_now),
+        "skipped_count": len(skipped),
+        "failed_count": len(failed),
+    }
+
+
+def list_migrations() -> Dict[str, Any]:
+    """List all .sql files in MIGRATIONS_DIR plus (best-effort) which
+    are already applied. Does NOT require a DB connection — the
+    applied set is empty if the manifest table can't be reached.
+
+    Used by `/admin/api/migrations` to render the "pending" badge.
+    """
+    files = discover_migrations()
+    file_list = [{"filename": f.name, "size_bytes": f.stat().st_size} for f in files]
+
+    applied: set = set()
+    manifest_error: Optional[str] = None
+    try:
+        db_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
+        if db_url:
+            executor = detect_executor()
+            ensure_manifest(executor, db_url)
+            applied = get_applied(executor, db_url)
+    except Exception as e:
+        manifest_error = f"{type(e).__name__}: {e}"
+
+    for entry in file_list:
+        entry["status"] = "applied" if entry["filename"] in applied else "pending"
+
+    return {
+        "migrations": file_list,
+        "applied_count": sum(1 for e in file_list if e["status"] == "applied"),
+        "pending_count": sum(1 for e in file_list if e["status"] == "pending"),
+        "manifest_error": manifest_error,
+    }
+
+
+# ─── CLI wrapper ──────────────────────────────────────────────────────
 
 def main():
     p = argparse.ArgumentParser(description="Apply all SQL migrations in migrations-py/")
@@ -307,49 +468,19 @@ def main():
 
     db_url = get_db_url(args.db_url)
     logger.info("connecting: %s", _strip_pg_url_password(db_url))
-    executor = detect_executor()
-    logger.info("using executor: %s", executor)
 
-    # Ensure manifest table exists, then read what's already applied
-    ensure_manifest(executor, db_url)
-    applied = set() if args.force else get_applied(executor, db_url)
-    if args.force:
-        logger.info("--force set; ignoring manifest (will re-apply all)")
-    else:
-        logger.info("manifest has %d already-applied migrations", len(applied))
-
-    # Optional filter for targeted re-runs
-    if args.only:
-        before = len(files)
-        files = [f for f in files if args.only in f.name]
-        logger.info("--only %r filter: %d -> %d files", args.only, before, len(files))
-
-    # Apply each migration not already in the manifest
-    success = 0
-    skipped = 0
-    failed = 0
-    for f in files:
-        if f.name in applied and not args.force:
-            logger.info("  skip (already applied): %s", f.name)
-            skipped += 1
-            continue
-        sql = strip_header(f.read_text(encoding="utf-8"))
-        sha = file_sha256(f)
-        logger.info("  applying: %s (%d bytes, sha256=%s...)", f.name, len(sql), sha[:12])
-        try:
-            _execute_sql(executor, db_url, sql)
-            record_applied(executor, db_url, f.name, sha)
-            logger.info("    ok")
-            success += 1
-        except Exception as e:
-            logger.error("    FAILED: %s", e)
-            failed += 1
-            logger.error("migration %s failed; subsequent migrations not attempted", f.name)
-            break
-
-    logger.info("done. applied=%d skipped=%d failed=%d", success, skipped, failed)
-
-    if failed:
+    result = apply_migrations(
+        db_url=db_url,
+        only=args.only,
+        force=args.force,
+    )
+    logger.info(
+        "done. applied=%d skipped=%d failed=%d",
+        result["success_count"],
+        result["skipped_count"],
+        result["failed_count"],
+    )
+    if result["failed_count"]:
         sys.exit(3)
     return 0
 

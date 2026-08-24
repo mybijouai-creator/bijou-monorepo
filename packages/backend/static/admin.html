@@ -1,469 +1,813 @@
 <!doctype html>
 <html lang="en">
-  <!-- edge-cache-bust:v=2026-07-28a -->
+  <!-- edge-cache-bust:v=2026-08-24a -->
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bijou AI - Admin Panel</title>
+    <title>Bijou AI — Admin Console</title>
+    <link rel="icon" type="image/svg+xml" href="/static/bijou-logo.svg" />
+    <link rel="icon" type="image/png" href="/static/favicon.png" />
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0B3B2E" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              canvas: "#0a0f0e",
+              surface1: "#12181a",
+              surface2: "#1a2224",
+              border1: "#233033",
+              muted1: "#9aa7a4",
+              emerald1: "#10b981",
+              emerald2: "#34d399",
+              gold1: "#E3B457",
+              gold2: "#F5DC9E",
+              danger1: "#ef4444",
+              info1: "#3b82f6",
+            },
+          },
+        },
+      };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
+      :root {
+        --canvas: #0a0f0e;
+        --surface-1: #12181a;
+        --surface-2: #1a2224;
+        --border: #233033;
+        --text-hi: #f2f5f4;
+        --text-mid: #9aa7a4;
+        --accent: #10b981;
+        --accent-hi: #34d399;
+        --premium: #E3B457;
+        --premium-pale: #F5DC9E;
+        --danger: #ef4444;
+        --info: #3b82f6;
+        --bj-green: #0B3B2E;
+        --bj-green-deep: #072A1F;
+        --bj-gold: #E3B457;
+        --bj-cream: #F7F4EC;
       }
-
+      html, body, #root { height: 100%; }
       body {
-        font-family:
-          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        min-height: 100vh;
-        padding: 20px;
+        background: var(--canvas);
+        color: var(--text-hi);
+        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+        margin: 0;
       }
-
-      .container {
-        max-width: 1200px;
-        margin: 0 auto;
-        background: white;
-        border-radius: 16px;
-        padding: 30px;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-      }
-
-      h1 {
-        color: #333;
-        margin-bottom: 10px;
-        font-size: 28px;
-      }
-
-      .subtitle {
-        color: #666;
-        margin-bottom: 30px;
-        font-size: 14px;
-      }
-
-      .stats {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 15px;
-        margin-bottom: 30px;
-      }
-
-      .stat-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 20px;
-        border-radius: 8px;
-        text-align: center;
-      }
-
-      .stat-number {
-        font-size: 32px;
-        font-weight: bold;
-        margin-bottom: 5px;
-      }
-
-      .stat-label {
-        font-size: 14px;
-        opacity: 0.9;
-      }
-
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 20px;
-      }
-
-      th {
-        background: #f8f9fa;
-        padding: 12px;
-        text-align: left;
-        font-weight: 600;
-        color: #495057;
-        border-bottom: 2px solid #dee2e6;
-      }
-
-      td {
-        padding: 12px;
-        border-bottom: 1px solid #dee2e6;
-      }
-
-      tr:hover {
-        background: #f8f9fa;
-      }
-
-      .badge {
-        display: inline-block;
-        padding: 4px 8px;
-        border-radius: 12px;
-        font-size: 12px;
-        font-weight: 500;
-      }
-
-      .badge-success {
-        background: #d4edda;
-        color: #155724;
-      }
-
-      .badge-warning {
-        background: #fff3cd;
-        color: #856404;
-      }
-
-      .badge-secondary {
-        background: #e2e3e5;
-        color: #383d41;
-      }
-
-      .btn {
-        padding: 8px 16px;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 500;
-        transition: all 0.2s;
-      }
-
-      .btn-primary {
-        background: #667eea;
-        color: white;
-      }
-
-      .btn-primary:hover {
-        background: #5568d3;
-        transform: translateY(-1px);
-      }
-
-      .btn-primary:disabled {
-        background: #ccc;
-        cursor: not-allowed;
-        transform: none;
-      }
-
-      .loading {
-        display: inline-block;
-        width: 14px;
-        height: 14px;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-        border-radius: 50%;
-        border-top-color: white;
-        animation: spin 0.6s linear infinite;
-        margin-right: 8px;
-        vertical-align: middle;
-      }
-
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-
-      .modal {
-        display: none;
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5);
-        z-index: 1000;
-        align-items: center;
-        justify-content: center;
-      }
-
-      .modal.active {
-        display: flex;
-      }
-
-      .modal-content {
-        background: white;
-        padding: 30px;
-        border-radius: 16px;
-        max-width: 500px;
-        width: 90%;
-        text-align: center;
-      }
-
-      .qr-code {
-        max-width: 300px;
-        margin: 20px auto;
-        border: 2px solid #dee2e6;
-        border-radius: 8px;
-      }
-
-      .close-btn {
-        margin-top: 20px;
-        background: #6c757d;
-        color: white;
-      }
-
-      .error {
-        color: #dc3545;
-        padding: 12px;
-        background: #f8d7da;
-        border-radius: 6px;
-        margin: 10px 0;
-      }
-
-      code {
-        background: #f8f9fa;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-family: monospace;
-        font-size: 12px;
-      }
+      ::-webkit-scrollbar { width: 9px; height: 9px; }
+      ::-webkit-scrollbar-thumb { background: #2a3a3d; border-radius: 5px; }
+      .fade-in { animation: fadeIn 0.25s ease-in; }
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(4px);} to {opacity: 1; transform: none;} }
+      .nav-item { transition: background 0.15s, color 0.15s; }
+      .nav-item:hover { background: var(--surface-2); }
+      .nav-item.active { background: var(--surface-2); color: var(--premium); border-left: 2px solid var(--premium); }
+      .pill { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:500; }
+      .pill-ok { background: rgba(16,185,129,.12); color:#34d399; }
+      .pill-warn { background: rgba(227,180,87,.12); color:#E3B457; }
+      .pill-err { background: rgba(239,68,68,.12); color:#fca5a5; }
+      .pill-mute { background: #1a2224; color:#9aa7a4; }
+      .btn { padding:6px 12px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; transition: all .15s; border:1px solid transparent; }
+      .btn-primary { background: var(--accent); color: #0a0f0e; }
+      .btn-primary:hover { background: var(--accent-hi); }
+      .btn-ghost { background: transparent; color: var(--text-mid); border-color: var(--border); }
+      .btn-ghost:hover { color: var(--text-hi); border-color: var(--text-mid); }
+      .btn-danger { background: rgba(239,68,68,.12); color: #fca5a5; border-color: rgba(239,68,68,.3); }
+      .btn-danger:hover { background: rgba(239,68,68,.2); }
+      .btn:disabled { opacity:0.4; cursor:not-allowed; }
+      .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; }
+      .input { background: var(--surface-2); border:1px solid var(--border); color: var(--text-hi); padding:7px 10px; border-radius:6px; font-size:13px; }
+      .input:focus { outline: none; border-color: var(--accent); }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th { text-align:left; padding: 10px 12px; color: var(--text-mid); font-weight:500; border-bottom:1px solid var(--border); }
+      td { padding: 10px 12px; border-bottom:1px solid var(--border); }
+      tr:hover td { background: var(--surface-2); }
+      .stat-card { background: var(--surface-1); border:1px solid var(--border); border-radius: 12px; padding: 18px; }
+      .stat-value { font-size: 26px; font-weight: 600; color: var(--text-hi); }
+      .stat-label { font-size: 12px; color: var(--text-mid); text-transform: uppercase; letter-spacing: 0.05em; }
+      .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.65); display:flex; align-items:center; justify-content:center; z-index: 100; }
+      .modal { background: var(--surface-1); border:1px solid var(--border); border-radius:12px; padding: 24px; max-width: 540px; width: 90%; }
+      kbd { background: var(--surface-2); padding: 2px 6px; border-radius: 4px; font-size: 11px; border: 1px solid var(--border); }
     </style>
   </head>
   <body>
-    <div class="container">
-      <h1>🤖 Bijou AI Admin Panel</h1>
-      <p class="subtitle">Manage tenants and WhatsApp connections</p>
+    <div id="root"></div>
 
-      <div class="stats" id="stats">
-        <div class="stat-card">
-          <div class="stat-number" id="totalTenants">-</div>
-          <div class="stat-label">Total Tenants</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-number" id="connectedTenants">-</div>
-          <div class="stat-label">Connected</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-number" id="pendingTenants">-</div>
-          <div class="stat-label">Pending Setup</div>
-        </div>
-      </div>
+    <script type="text/babel" data-presets="env,react">
+      const { useState, useEffect, useMemo, useCallback, useRef, Fragment } = React;
 
-      <div id="errorMessage" style="display: none" class="error"></div>
+      // ─── helpers ──────────────────────────────────────────────────
+      const ADMIN_BASE = "/admin/api";
 
-      <table>
-        <thead>
-          <tr>
-            <th>Business Name</th>
-            <th>Email</th>
-            <th>Phone</th>
-            <th>Status</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="tenantsTable">
-          <tr>
-            <td colspan="6" style="text-align: center; padding: 40px">
-              <div class="loading"></div>
-              Loading tenants...
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- QR Code Modal -->
-    <div class="modal" id="qrModal">
-      <div class="modal-content">
-        <h2 id="modalTitle">Scan QR Code</h2>
-        <p id="modalSubtitle" style="color: #666; margin: 10px 0"></p>
-        <div id="qrContainer">
-          <div class="loading" style="margin: 40px auto"></div>
-        </div>
-        <button class="btn close-btn" onclick="closeModal()">Close</button>
-      </div>
-    </div>
-
-    <script>
-      let tenants = [];
-
-      // The admin API now requires the operator's shared secret in
-      // `X-Admin-Key`. We pull it from `localStorage.admin_api_key`.
-      // If the key is missing, every request 401s and the operator sees
-      // a clear message instead of a silent empty list.
-      function adminHeaders(extra) {
-        const h = Object.assign({}, extra || {});
-        const k = (localStorage.getItem("admin_api_key") || "").trim();
-        if (k) h["X-Admin-Key"] = k;
-        return h;
-      }
-
-      async function loadTenants() {
-        try {
-          const response = await fetch("/api/admin/tenants", {
-            headers: adminHeaders(),
-          });
-          if (!response.ok) {
-            if (response.status === 401 || response.status === 503) {
-              const hint = response.status === 503
-                ? "Admin API is not configured. Set ADMIN_API_KEY on the server."
-                : "Invalid or missing X-Admin-Key. Set localStorage.admin_api_key.";
-              showError("🔒 " + hint);
-              return;
-            }
-            throw new Error("Failed to load tenants (HTTP " + response.status + ")");
-          }
-
-          const data = await response.json();
-          tenants = data.tenants;
-          renderTenants();
-          updateStats();
-        } catch (error) {
-          console.error("Error loading tenants:", error);
-          showError("Failed to load tenants: " + error.message);
+      // 401 bounce: if any fetch returns 401, send the user to login.
+      // We pass `?next=/admin.html` so the login page redirects back.
+      async function adminFetch(path, opts = {}) {
+        const url = path.startsWith("http") ? path : `${ADMIN_BASE}${path}`;
+        const headers = {
+          ...(opts.headers || {}),
+          "Content-Type": "application/json",
+        };
+        const session = readSession();
+        if (session?.access_token) {
+          headers["Authorization"] = `Bearer ${session.access_token}`;
         }
-      }
-
-      function updateStats() {
-        const total = tenants.length;
-        const connected = tenants.filter((t) => t.whatsapp_connected_at).length;
-        const pending = total - connected;
-
-        document.getElementById("totalTenants").textContent = total;
-        document.getElementById("connectedTenants").textContent = connected;
-        document.getElementById("pendingTenants").textContent = pending;
-      }
-
-      // HTML-attribute safe escaper. Tenant business_name/email/phone are
-      // user-controlled at signup, so they must be escaped before any
-      // innerHTML or attribute interpolation.
-      function escHtml(s) {
-        return String(s == null ? "" : s)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      }
-
-      function renderTenants() {
-        const tbody = document.getElementById("tenantsTable");
-
-        if (tenants.length === 0) {
-          tbody.innerHTML = `
-            <tr>
-              <td colspan="6" style="text-align: center; padding: 40px; color: #666">
-                No tenants found
-              </td>
-            </tr>
-          `;
-          return;
+        const r = await fetch(url, { ...opts, headers });
+        if (r.status === 401) {
+          window.location.href = "/static/login.html?next=" + encodeURIComponent("/admin.html");
+          throw new Error("unauthenticated");
         }
-
-        tbody.innerHTML = tenants
-          .map((tenant) => {
-            // tenant.id is server-generated (UUID) but encode it anyway for defense
-            // in depth. tenant.business_name is user-controlled at signup — escape it.
-            const safeId = encodeURIComponent(tenant.id || "");
-            const safeName = escHtml(tenant.business_name);
-            const safeEmail = escHtml(tenant.email);
-            const safePhone = escHtml(tenant.phone || "-");
-            const safeCreated = escHtml(
-              new Date(tenant.created_at).toLocaleDateString(),
-            );
-            const actionCell = tenant.whatsapp_connected_at
-              ? `<span class="badge badge-secondary">Already connected</span>`
-              // Use a data-attribute + event delegation; never inline user input
-              // into an onclick string. data-tenant-id stays raw for the listener.
-              : `<button class="btn btn-primary" data-tenant-id="${escHtml(tenant.id || "")}" data-tenant-name="${safeName}">
-                  Generate QR
-                </button>`;
-            return `
-              <tr>
-                <td><strong>${safeName}</strong></td>
-                <td>${safeEmail}</td>
-                <td>${safePhone}</td>
-                <td>
-                  ${
-                    tenant.whatsapp_connected_at
-                      ? '<span class="badge badge-success">✅ Connected</span>'
-                      : '<span class="badge badge-warning">⏳ Pending</span>'
-                  }
-                </td>
-                <td>${safeCreated}</td>
-                <td>${actionCell}</td>
-              </tr>
-            `;
-          })
-          .join("");
-
-        // Bind the Generate QR buttons via delegation (one listener, no inline JS).
-        tbody.querySelectorAll("button[data-tenant-id]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            const id = btn.getAttribute("data-tenant-id") || "";
-            const name = btn.getAttribute("data-tenant-name") || "";
-            generateQR(id, name);
-          });
-        });
+        if (!r.ok) {
+          let detail = `${r.status} ${r.statusText}`;
+          try { const j = await r.json(); detail = j.detail || JSON.stringify(j); } catch {}
+          throw new Error(detail);
+        }
+        if (r.status === 204 || !r.content) return {};
+        return r.json();
       }
 
-      async function generateQR(tenantId, businessName) {
-        const modal = document.getElementById("qrModal");
-        const modalTitle = document.getElementById("modalTitle");
-        const modalSubtitle = document.getElementById("modalSubtitle");
-        const qrContainer = document.getElementById("qrContainer");
-
-        // Show modal with loading state
-        modalTitle.textContent = `Setup WhatsApp for ${businessName}`;
-        // Use textContent for the code, not innerHTML, to avoid XSS.
-        modalSubtitle.textContent = "Tenant ID:";
-        const codeEl = document.createElement("code");
-        codeEl.textContent = tenantId;
-        modalSubtitle.appendChild(codeEl);
-        qrContainer.innerHTML =
-          '<div class="loading" style="margin: 40px auto"></div>';
-        modal.classList.add("active");
-
+      function readSession() {
         try {
-          const response = await fetch(`/api/admin/qr/${tenantId}`, {
-            method: "POST",
-            headers: adminHeaders(),
-          });
-
-          if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || "Failed to generate QR");
+          const sessionRaw = localStorage.getItem("sb_session") || localStorage.getItem("supabase.auth.token");
+          if (sessionRaw) {
+            const s = JSON.parse(sessionRaw);
+            return s?.access_token ? s : null;
           }
+        } catch {}
+        return null;
+      }
 
-          const blob = await response.blob();
-          const qrUrl = URL.createObjectURL(blob);
+      // ─── mini components ──────────────────────────────────────────
+      const Pill = ({ kind = "mute", children }) => {
+        const cls = { ok: "pill-ok", warn: "pill-warn", err: "pill-err", mute: "pill-mute" }[kind];
+        return <span className={`pill ${cls}`}>{children}</span>;
+      };
 
-          qrContainer.innerHTML = `
-            <img src="${qrUrl}" class="qr-code" alt="WhatsApp QR Code" />
-            <p style="margin-top: 15px; color: #666; font-size: 14px">
-              <strong>Scan this QR code with WhatsApp:</strong><br>
-              Open WhatsApp → Menu → Linked Devices → Link a Device
-            </p>
-          `;
-        } catch (error) {
-          console.error("QR generation error:", error);
-          // error.message comes from a JSON response body (server-controlled),
-          // not user input — but escape anyway in case server forwards any
-          // user-controlled text (e.g. Supabase error messages).
-          qrContainer.innerHTML = `
-            <div class="error">
-              ❌ ${escHtml(error.message)}
+      const Stat = ({ label, value, sub }) => (
+        <div className="stat-card">
+          <div className="stat-label">{label}</div>
+          <div className="stat-value mt-1">{value}</div>
+          {sub && <div className="text-xs text-[color:var(--text-mid)] mt-1">{sub}</div>}
+        </div>
+      );
+
+      const Modal = ({ open, title, children, onClose, actions }) => {
+        if (!open) return null;
+        return (
+          <div className="modal-backdrop" onClick={onClose}>
+            <div className="modal fade-in" onClick={(e) => e.stopPropagation()}>
+              <div className="text-lg font-semibold mb-3" style={{ color: "var(--premium)" }}>{title}</div>
+              <div className="text-sm text-[color:var(--text-hi)]">{children}</div>
+              <div className="mt-5 flex gap-2 justify-end">{actions}</div>
             </div>
-          `;
+          </div>
+        );
+      };
+
+      // ─── tabs ─────────────────────────────────────────────────────
+      const TABS = [
+        { id: "health",     label: "Health" },
+        { id: "tenants",    label: "Tenants" },
+        { id: "users",      label: "Users" },
+        { id: "billing",    label: "Billing" },
+        { id: "migrations", label: "Migrations" },
+        { id: "keys",       label: "API Keys" },
+        { id: "audit",      label: "Audit Log" },
+      ];
+
+      // ─── pages ────────────────────────────────────────────────────
+      function HealthPage() {
+        const [data, setData] = useState(null);
+        const [err, setErr] = useState(null);
+        useEffect(() => { adminFetch("/health").then(setData).catch(setErr); }, []);
+        if (err) return <ErrorBox err={err} />;
+        if (!data) return <Loading />;
+        const st = data.self_test || {};
+        const stOverall = st.overall || "unknown";
+        const stPill = stOverall === "pass" ? "ok" : stOverall === "warn" ? "warn" : stOverall === "degraded" ? "warn" : stOverall === "fail" ? "err" : "mute";
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Stat label="Tenants"      value={data.tenants?.total ?? 0} sub={`${data.tenants?.active_subscriptions ?? 0} active / ${data.tenants?.trials ?? 0} trial`} />
+              <Stat label="MRR Estimate" value={`RM ${((data.mrr_estimate_cents || 0) / 100).toLocaleString()}`} sub="monthly recurring" />
+              <Stat label="API Keys"     value={`${data.keys_configured}/${data.keys_total}`} sub="configured" />
+              <Stat label="Audit 24h"    value={data.audit_events_last_24h ?? 0} sub="admin actions" />
+            </div>
+
+            <div className="card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="font-semibold">System Self-Test</span>
+                <Pill kind={stPill}>{stOverall}</Pill>
+                <span className="text-xs text-[color:var(--text-mid)] ml-auto">{st.elapsed_ms ? `${st.elapsed_ms} ms` : ""}</span>
+              </div>
+              {st.summary && (
+                <div className="text-xs text-[color:var(--text-mid)]">
+                  passing: {st.summary.passing ?? 0} · warnings: {st.summary.warnings ?? 0} · failing: {st.summary.failing ?? 0}
+                  {st.summary.critical_failures?.length ? ` · critical: ${st.summary.critical_failures.join(", ")}` : ""}
+                </div>
+              )}
+              <div className="mt-2 text-xs">
+                <a href="/api/self-test" target="_blank" className="text-[color:var(--accent)] underline">view full report →</a>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function TenantsPage() {
+        const [data, setData] = useState(null);
+        const [err, setErr] = useState(null);
+        const [search, setSearch] = useState("");
+        const [detail, setDetail] = useState(null);
+        const load = useCallback(() => {
+          const q = search ? `?search=${encodeURIComponent(search)}&limit=200` : "?limit=200";
+          adminFetch(`/tenants${q}`).then(setData).catch(setErr);
+        }, [search]);
+        useEffect(() => { load(); }, [load]);
+        if (err) return <ErrorBox err={err} />;
+        if (!data) return <Loading />;
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <input className="input flex-1" placeholder="Search business_name or email…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <button className="btn btn-ghost" onClick={load}>Search</button>
+            </div>
+            <div className="card overflow-x-auto">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Business</th>
+                    <th>Email</th>
+                    <th>Plan</th>
+                    <th>Sub</th>
+                    <th>WhatsApp</th>
+                    <th>Msgs</th>
+                    <th>KB</th>
+                    <th>Created</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.tenants || []).map((t) => (
+                    <tr key={t.id}>
+                      <td><span className="font-medium">{t.business_name || "—"}</span></td>
+                      <td className="text-[color:var(--text-mid)]">{t.email || "—"}</td>
+                      <td><Pill kind="mute">{t.plan || "free"}</Pill></td>
+                      <td>
+                        {t.is_trial ? <Pill kind="warn">trial</Pill> :
+                          <Pill kind={t.subscription_status === "active" ? "ok" : (t.subscription_status === "past_due" ? "err" : "mute")}>
+                            {t.subscription_status || "—"}
+                          </Pill>}
+                      </td>
+                      <td>
+                        {t.whatsapp_connected_at ?
+                          <Pill kind="ok">connected</Pill> :
+                          <Pill kind="warn">pending</Pill>}
+                      </td>
+                      <td className="text-[color:var(--text-mid)]">{t.message_count}</td>
+                      <td className="text-[color:var(--text-mid)]">{t.kb_doc_count}</td>
+                      <td className="text-[color:var(--text-mid)]">{t.created_at ? new Date(t.created_at).toLocaleDateString() : "—"}</td>
+                      <td><button className="btn btn-ghost" onClick={() => adminFetch(`/tenants/${t.id}`).then(setDetail)}>open</button></td>
+                    </tr>
+                  ))}
+                  {(!data.tenants || !data.tenants.length) && (
+                    <tr><td colSpan="9" className="text-center text-[color:var(--text-mid)] py-6">No tenants yet</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <Modal open={!!detail} title={detail?.tenant?.business_name || "Tenant"} onClose={() => setDetail(null)} actions={
+              <button className="btn btn-ghost" onClick={() => setDetail(null)}>close</button>
+            }>
+              {detail && (
+                <div className="space-y-2 text-xs">
+                  <div><b>id:</b> <code>{detail.tenant?.id}</code></div>
+                  <div><b>email:</b> {detail.tenant?.email}</div>
+                  <div><b>phone:</b> {detail.tenant?.phone || "—"}</div>
+                  <div><b>plan:</b> {detail.tenant?.plan} · <b>sub:</b> {detail.tenant?.subscription_status} {detail.tenant?.is_trial ? "(trial)" : ""}</div>
+                  <div><b>stripe_customer:</b> {detail.tenant?.stripe_customer_id || "—"}</div>
+                  <div><b>usage:</b> {detail.usage?.message_count} msgs · {detail.usage?.conversation_count} convs · {detail.usage?.kb_doc_count} KB docs</div>
+                  <div><b>WhatsApp devices:</b> {detail.whatsapp_devices?.length || 0}</div>
+                  <div><b>KB docs:</b> {(detail.kb_documents || []).slice(0,5).map(d => d.title).join(", ") || "—"}</div>
+                </div>
+              )}
+            </Modal>
+          </div>
+        );
+      }
+
+      function UsersPage() {
+        const [data, setData] = useState(null);
+        const [err, setErr] = useState(null);
+        const [search, setSearch] = useState("");
+        const [impTarget, setImpTarget] = useState(null);
+        const [impReason, setImpReason] = useState("");
+        const [impResult, setImpResult] = useState(null);
+        const load = useCallback(() => {
+          const q = search ? `?search=${encodeURIComponent(search)}&limit=200` : "?limit=200";
+          adminFetch(`/users${q}`).then(setData).catch(setErr);
+        }, [search]);
+        useEffect(() => { load(); }, [load]);
+        if (err) return <ErrorBox err={err} />;
+        if (!data) return <Loading />;
+        return (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <input className="input flex-1" placeholder="Search email or business_name…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <button className="btn btn-ghost" onClick={load}>Search</button>
+            </div>
+            <div className="card overflow-x-auto">
+              <table>
+                <thead>
+                  <tr>
+                    <th>User ID</th>
+                    <th>Tenant</th>
+                    <th>Business</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Linked</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.users || []).map((u) => (
+                    <tr key={u.user_id}>
+                      <td><code className="text-xs">{u.user_id?.slice(0, 8)}…</code> {u.is_platform_admin && <Pill kind="warn">admin</Pill>}</td>
+                      <td className="text-[color:var(--text-mid)]">{u.tenant_email || "—"}</td>
+                      <td>{u.business_name || "—"}</td>
+                      <td><Pill kind="mute">{u.role || "owner"}</Pill></td>
+                      <td>
+                        {u.tenant_status === "suspended" ? <Pill kind="err">suspended</Pill> :
+                          u.tenant_status === "active"     ? <Pill kind="ok">active</Pill> :
+                                                            <Pill kind="mute">{u.tenant_status || "—"}</Pill>}
+                      </td>
+                      <td className="text-[color:var(--text-mid)]">{u.linked_at ? new Date(u.linked_at).toLocaleDateString() : "—"}</td>
+                      <td><button className="btn btn-ghost" onClick={() => { setImpTarget(u); setImpResult(null); setImpReason(""); }}>impersonate</button></td>
+                    </tr>
+                  ))}
+                  {(!data.users || !data.users.length) && (
+                    <tr><td colSpan="7" className="text-center text-[color:var(--text-mid)] py-6">No users yet</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <Modal open={!!impTarget} title="Impersonate user" onClose={() => setImpTarget(null)} actions={
+              <Fragment>
+                <button className="btn btn-ghost" onClick={() => setImpTarget(null)}>cancel</button>
+                <button className="btn btn-primary" disabled={!impReason} onClick={async () => {
+                  try {
+                    const r = await adminFetch(`/users/${impTarget.user_id}/impersonate`, { method: "POST", body: JSON.stringify({ reason: impReason }) });
+                    setImpResult(r);
+                  } catch (e) { setImpResult({ error: e.message }); }
+                }}>confirm impersonate</button>
+              </Fragment>
+            }>
+              {impTarget && (
+                <div className="space-y-2 text-xs">
+                  <div>user_id: <code>{impTarget.user_id}</code></div>
+                  <div>tenant: <b>{impTarget.business_name}</b> ({impTarget.tenant_email})</div>
+                  <div className="text-[color:var(--premium)] mt-2">⚠ This writes an audit_log row. Type a reason:</div>
+                  <input className="input w-full" placeholder="support case #1234 — login broken" value={impReason} onChange={(e) => setImpReason(e.target.value)} />
+                  {impResult && (
+                    <div className="mt-2 p-2 rounded" style={{ background: "var(--surface-2)" }}>
+                      {impResult.error ? <span className="text-red-400">{impResult.error}</span> :
+                        <span>audit row written · user_email: {impResult.user_email || "—"}<br/>
+                          <span className="text-[color:var(--text-mid)]">{impResult.note}</span>
+                        </span>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Modal>
+          </div>
+        );
+      }
+
+      function BillingPage() {
+        const [summary, setSummary] = useState(null);
+        const [tx, setTx] = useState(null);
+        const [err, setErr] = useState(null);
+        const [refundTarget, setRefundTarget] = useState("");
+        const [refundAmt, setRefundAmt] = useState("");
+        const [refundReason, setRefundReason] = useState("requested_by_customer");
+        const [refundResult, setRefundResult] = useState(null);
+        const load = () => {
+          adminFetch("/billing/summary").then(setSummary).catch(setErr);
+          adminFetch("/billing/transactions?limit=50").then(setTx).catch(() => {});
+        };
+        useEffect(load, []);
+        if (err) return <ErrorBox err={err} />;
+        if (!summary) return <Loading />;
+        return (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Stat label="MRR"        value={`RM ${((summary.mrr_estimate_cents || 0) / 100).toLocaleString()}`} />
+              <Stat label="Active"     value={summary.active_subscriptions} sub="paying subs" />
+              <Stat label="Trialing"   value={summary.trialing} sub="in free trial" />
+              <Stat label="Past Due"   value={summary.past_due} sub="payment failed" />
+            </div>
+
+            <div className="card p-4">
+              <div className="font-semibold mb-2">Recent refunds (Stripe)</div>
+              <div className="space-y-1 text-xs">
+                {(summary.recent_refunds || []).length === 0 ? <div className="text-[color:var(--text-mid)]">no refunds yet</div> :
+                  summary.recent_refunds.map((r) => (
+                    <div key={r.refund_id} className="flex items-center gap-2">
+                      <code className="text-xs">{r.refund_id}</code>
+                      <span>{(r.amount_cents/100).toLocaleString()} {r.currency.toUpperCase()}</span>
+                      <span className="text-[color:var(--text-mid)]">{r.tenant_business_name || "—"}</span>
+                      <Pill kind={r.status === "succeeded" ? "ok" : "warn"}>{r.status}</Pill>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            <div className="card p-4">
+              <div className="font-semibold mb-2">Issue a refund</div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-xs">
+                <input className="input" placeholder="charge id (ch_…) or payment_intent (pi_…)" value={refundTarget} onChange={(e) => setRefundTarget(e.target.value)} />
+                <input className="input" placeholder="amount cents (blank=full)" value={refundAmt} onChange={(e) => setRefundAmt(e.target.value)} />
+                <select className="input" value={refundReason} onChange={(e) => setRefundReason(e.target.value)}>
+                  <option value="">— reason —</option>
+                  <option value="duplicate">duplicate</option>
+                  <option value="fraudulent">fraudulent</option>
+                  <option value="requested_by_customer">requested_by_customer</option>
+                </select>
+                <button className="btn btn-danger" disabled={!refundTarget.startsWith("ch_") && !refundTarget.startsWith("pi_")}
+                  onClick={async () => {
+                    const body = { charge_or_pi_id: refundTarget, reason: refundReason || null };
+                    if (refundAmt) body.amount_cents = parseInt(refundAmt, 10);
+                    try {
+                      const r = await adminFetch("/billing/refund", { method: "POST", body: JSON.stringify(body) });
+                      setRefundResult(r);
+                    } catch (e) { setRefundResult({ error: e.message }); }
+                  }}>issue refund</button>
+              </div>
+              {refundResult && (
+                <div className="mt-2 p-2 rounded text-xs" style={{ background: "var(--surface-2)" }}>
+                  {refundResult.error ? <span className="text-red-400">{refundResult.error}</span> :
+                    <span>refund_id: <code>{refundResult.refund_id}</code> · {(refundResult.amount_cents/100).toLocaleString()} {refundResult.currency.toUpperCase()} · status: {refundResult.status}</span>}
+                </div>
+              )}
+            </div>
+
+            <div className="card overflow-x-auto">
+              <div className="p-3 font-semibold">Recent transactions</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>When</th><th>Tenant</th><th>Amount</th><th>Status</th><th>Plan</th><th>Charge</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(tx?.transactions || []).map((t) => (
+                    <tr key={t.id}>
+                      <td className="text-[color:var(--text-mid)]">{t.created_at ? new Date(t.created_at).toLocaleString() : "—"}</td>
+                      <td><code className="text-xs">{t.tenant_id?.slice(0,8)}…</code></td>
+                      <td>{(t.amount_cents/100).toLocaleString()} {t.currency?.toUpperCase()}</td>
+                      <td>
+                        <Pill kind={t.status === "succeeded" ? "ok" : t.status === "refunded" ? "warn" : t.status === "failed" ? "err" : "mute"}>
+                          {t.status}
+                        </Pill>
+                      </td>
+                      <td>{t.plan_name || "—"}</td>
+                      <td><code className="text-xs">{t.stripe_charge_id || t.stripe_payment_intent_id || "—"}</code></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      }
+
+      function MigrationsPage() {
+        const [data, setData] = useState(null);
+        const [err, setErr] = useState(null);
+        const [confirm, setConfirm] = useState(null);
+        const [result, setResult] = useState(null);
+        const load = () => adminFetch("/migrations").then(setData).catch(setErr);
+        useEffect(load, []);
+        if (err) return <ErrorBox err={err} />;
+        if (!data) return <Loading />;
+        const pending = (data.migrations || []).filter(m => m.status === "pending");
+        return (
+          <div className="space-y-3">
+            <div className="card p-4">
+              <div className="font-semibold mb-2">Migrations</div>
+              <div className="text-xs text-[color:var(--text-mid)] mb-2">
+                {data.applied_count} applied · {data.pending_count} pending
+                {data.manifest_error ? <span className="text-red-400 ml-2">manifest error: {data.manifest_error}</span> : null}
+              </div>
+              <table>
+                <thead><tr><th>Filename</th><th>Size</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {(data.migrations || []).map((m) => (
+                    <tr key={m.filename}>
+                      <td><code className="text-xs">{m.filename}</code></td>
+                      <td className="text-[color:var(--text-mid)]">{(m.size_bytes/1024).toFixed(1)} KB</td>
+                      <td><Pill kind={m.status === "applied" ? "ok" : "warn"}>{m.status}</Pill></td>
+                      <td>{m.status === "pending" ? <button className="btn btn-ghost" onClick={() => { setConfirm(m); setResult(null); }}>apply ▸</button> : null}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <Modal open={!!confirm} title="Apply migration" onClose={() => setConfirm(null)} actions={
+              <Fragment>
+                <button className="btn btn-ghost" onClick={() => setConfirm(null)}>cancel</button>
+                <button className="btn btn-primary" onClick={async () => {
+                  try {
+                    const r = await adminFetch("/migrations/apply", { method: "POST", body: JSON.stringify({ filename: confirm.filename, force: false }) });
+                    setResult(r);
+                    load();
+                  } catch (e) { setResult({ error: e.message }); }
+                }}>run migration</button>
+              </Fragment>
+            }>
+              {confirm && (
+                <div className="space-y-2 text-xs">
+                  <div>about to run: <code>{confirm.filename}</code></div>
+                  <div className="text-[color:var(--premium)]">⚠ schema changes are not reversible from this UI. Make sure you have a backup.</div>
+                  {result && (
+                    <div className="mt-2 p-2 rounded" style={{ background: "var(--surface-2)" }}>
+                      {result.error ? <span className="text-red-400">{result.error}</span> :
+                        <span>applied: {result.applied?.join(", ") || "—"} · skipped: {result.skipped_count} · failed: {result.failed_count}
+                          {result.failed?.length ? ` · errors: ${result.failed.map(f => f.filename + " " + f.error).join("; ")}` : ""}
+                        </span>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Modal>
+          </div>
+        );
+      }
+
+      function KeysPage() {
+        const [data, setData] = useState(null);
+        const [err, setErr] = useState(null);
+        const [testResult, setTestResult] = useState({});
+        useEffect(() => { adminFetch("/keys").then(setData).catch(setErr); }, []);
+        if (err) return <ErrorBox err={err} />;
+        if (!data) return <Loading />;
+        return (
+          <div className="space-y-3">
+            <div className="card p-4">
+              <div className="font-semibold mb-2">API Keys & Integrations</div>
+              <div className="text-xs text-[color:var(--text-mid)] mb-2">
+                Real values are never returned. Masked view only. Use the test button to live-check each.
+              </div>
+              <table>
+                <thead><tr><th>Key</th><th>Status</th><th>Masked</th><th></th></tr></thead>
+                <tbody>
+                  {data.keys.map((k) => (
+                    <tr key={k.name}>
+                      <td><code className="text-xs">{k.name}</code></td>
+                      <td>{k.configured ? <Pill kind="ok">set</Pill> : <Pill kind="warn">missing</Pill>}</td>
+                      <td className="text-[color:var(--text-mid)]">{k.masked || "—"} {k.mode ? <Pill kind="mute">{k.mode}</Pill> : null}</td>
+                      <td>
+                        {["supabase","stripe","gemini","resend","nango","calcom","bridge"].includes(integrationName(k.name)) ?
+                          <button className="btn btn-ghost" disabled={!k.configured} onClick={async () => {
+                            const n = integrationName(k.name);
+                            try {
+                              const r = await adminFetch(`/keys/test/${n}`, { method: "POST" });
+                              setTestResult((s) => ({ ...s, [k.name]: r }));
+                            } catch (e) {
+                              setTestResult((s) => ({ ...s, [k.name]: { error: e.message } }));
+                            }
+                          }}>test</button> : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {Object.entries(testResult).length > 0 && (
+                <div className="mt-3 space-y-1 text-xs">
+                  {Object.entries(testResult).map(([name, r]) => (
+                    <div key={name}><b>{name}:</b> {r.error ? <span className="text-red-400">{r.error}</span> : <span><Pill kind={r.status === "pass" ? "ok" : "err"}>{r.status}</Pill> {r.detail}</span>}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      function integrationName(envName) {
+        if (envName === "SUPABASE_URL" || envName === "SUPABASE_SERVICE_KEY") return "supabase";
+        if (envName.startsWith("STRIPE_")) return "stripe";
+        if (envName === "GEMINI_API_KEY") return "gemini";
+        if (envName === "RESEND_API_KEY") return "resend";
+        if (envName === "NANGO_SECRET_KEY") return "nango";
+        if (envName.startsWith("CALCOM_")) return "calcom";
+        if (envName === "BRIDGE_API_KEY") return "bridge";
+        return null;
+      }
+
+      function AuditPage() {
+        const [data, setData] = useState(null);
+        const [err, setErr] = useState(null);
+        const [filters, setFilters] = useState({ action: "", target_type: "" });
+        const load = () => {
+          const q = new URLSearchParams();
+          if (filters.action) q.set("action", filters.action);
+          if (filters.target_type) q.set("target_type", filters.target_type);
+          q.set("limit", "200");
+          adminFetch(`/audit?${q.toString()}`).then(setData).catch(setErr);
+        };
+        useEffect(load, [filters.action, filters.target_type]);
+        if (err) return <ErrorBox err={err} />;
+        if (!data) return <Loading />;
+        return (
+          <div className="space-y-3">
+            <div className="card p-4">
+              <div className="flex gap-2 items-center mb-2">
+                <input className="input" placeholder="filter action (e.g. user.impersonate)" value={filters.action} onChange={(e) => setFilters((f) => ({ ...f, action: e.target.value }))} />
+                <input className="input" placeholder="filter target_type (e.g. migration)" value={filters.target_type} onChange={(e) => setFilters((f) => ({ ...f, target_type: e.target.value }))} />
+                <button className="btn btn-ghost" onClick={() => setFilters({ action: "", target_type: "" })}>clear</button>
+              </div>
+              <table>
+                <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>IP</th><th>Metadata</th></tr></thead>
+                <tbody>
+                  {(data.events || []).map((e) => (
+                    <tr key={e.id}>
+                      <td className="text-[color:var(--text-mid)]">{new Date(e.created_at).toLocaleString()}</td>
+                      <td>{e.actor_email || "—"} <Pill kind="mute">{e.actor_type}</Pill></td>
+                      <td><code className="text-xs">{e.action}</code></td>
+                      <td>{e.target_type ? `${e.target_type}:${(e.target_id || "").slice(0,8)}…` : "—"}</td>
+                      <td className="text-[color:var(--text-mid)] text-xs">{e.ip || "—"}</td>
+                      <td className="text-xs text-[color:var(--text-mid)]"><code>{JSON.stringify(e.metadata || {})}</code></td>
+                    </tr>
+                  ))}
+                  {(!data.events || !data.events.length) && (
+                    <tr><td colSpan="6" className="text-center text-[color:var(--text-mid)] py-6">No audit events</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      }
+
+      function Loading() {
+        return <div className="text-center text-[color:var(--text-mid)] py-8 text-sm">loading…</div>;
+      }
+      function ErrorBox({ err }) {
+        return <div className="card p-4 text-sm text-red-400">⚠ {String(err.message || err)}</div>;
+      }
+
+      // ─── Cmd-K palette ────────────────────────────────────────────
+      function CommandPalette({ open, onClose, onPick }) {
+        const [q, setQ] = useState("");
+        const items = useMemo(() => {
+          const all = [
+            ...TABS.map(t => ({ id: "tab:" + t.id, label: t.label, kind: "tab" })),
+            { id: "goto:docs",  label: "docs/admin-frontend-design.md", kind: "link" },
+            { id: "goto:self",  label: "GET /api/self-test (full report)", kind: "link" },
+            { id: "goto:repos", label: "Repository on GitHub", kind: "link" },
+          ];
+          if (!q) return all;
+          return all.filter(i => i.label.toLowerCase().includes(q.toLowerCase()));
+        }, [q]);
+        if (!open) return null;
+        return (
+          <div className="modal-backdrop" onClick={onClose}>
+            <div className="modal fade-in" onClick={(e) => e.stopPropagation()}>
+              <input autoFocus className="input w-full" placeholder="Type a command or search…" value={q} onChange={(e) => setQ(e.target.value)} />
+              <div className="mt-3 space-y-1 text-sm">
+                {items.map((i) => (
+                  <div key={i.id} className="px-2 py-1 rounded hover:bg-[color:var(--surface-2)] cursor-pointer" onClick={() => { onPick(i); onClose(); }}>
+                    <Pill kind="mute">{i.kind}</Pill> {i.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // ─── main shell ──────────────────────────────────────────────
+      function App() {
+        const [tab, setTab] = useState("health");
+        const [palette, setPalette] = useState(false);
+        const [me, setMe] = useState(null);
+
+        useEffect(() => {
+          // Check if current user is a platform admin. If not, this
+          // page is forbidden — show a clean error instead of an
+          // unhelpful 403 in the console.
+          const session = readSession();
+          if (!session) {
+            window.location.href = "/static/login.html?next=" + encodeURIComponent("/admin.html");
+            return;
+          }
+          adminFetch("/me").then((r) => setMe(r)).catch((e) => setMe({ error: e.message }));
+        }, []);
+
+        useEffect(() => {
+          const onKey = (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+              e.preventDefault();
+              setPalette(true);
+            } else if (e.key === "Escape") {
+              setPalette(false);
+            }
+          };
+          window.addEventListener("keydown", onKey);
+          return () => window.removeEventListener("keydown", onKey);
+        }, []);
+
+        const page = {
+          health:     <HealthPage />,
+          tenants:    <TenantsPage />,
+          users:      <UsersPage />,
+          billing:    <BillingPage />,
+          migrations: <MigrationsPage />,
+          keys:       <KeysPage />,
+          audit:      <AuditPage />,
+        }[tab];
+
+        if (!me) return <div className="p-8 text-[color:var(--text-mid)]">checking admin access…</div>;
+        if (me.error) {
+          return (
+            <div className="p-8">
+              <div className="card p-6 max-w-2xl mx-auto">
+                <div className="text-lg font-semibold text-[color:var(--premium)] mb-2">⚠ cannot access admin console</div>
+                <div className="text-sm text-[color:var(--text-mid)] mb-3">{me.error}</div>
+                <div className="text-xs text-[color:var(--text-mid)]">If you just signed up, ask an existing platform admin to add your user_id to <code>public.platform_admins</code>. See <code>docs/admin-frontend-design.md</code>.</div>
+              </div>
+            </div>
+          );
         }
+        if (!me.is_platform_admin) {
+          return (
+            <div className="p-8">
+              <div className="card p-6 max-w-2xl mx-auto">
+                <div className="text-lg font-semibold text-[color:var(--premium)] mb-2">403 — not a platform admin</div>
+                <div className="text-sm text-[color:var(--text-mid)] mb-3">You're signed in as <code>{me.email}</code> but you don't have a row in <code>public.platform_admins</code>.</div>
+                <div className="text-xs text-[color:var(--text-mid)]">To grant access, run in Supabase SQL editor:<br/><br/><code>insert into public.platform_admins (user_id, email) values ('{me.user_id}', '{me.email}');</code></div>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div className="flex h-full">
+            <aside className="w-56 border-r flex flex-col" style={{ borderColor: "var(--border)" }}>
+              <div className="p-4 border-b" style={{ borderColor: "var(--border)" }}>
+                <div className="text-base font-semibold" style={{ color: "var(--premium)" }}>Bijou Admin</div>
+                <div className="text-xs text-[color:var(--text-mid)] mt-1">{me.email}</div>
+              </div>
+              <nav className="flex-1 py-2">
+                {TABS.map((t) => (
+                  <div key={t.id}
+                       className={`nav-item px-4 py-2 text-sm cursor-pointer ${tab === t.id ? "active" : ""}`}
+                       onClick={() => setTab(t.id)}>
+                    {t.label}
+                  </div>
+                ))}
+              </nav>
+              <div className="p-3 border-t text-xs text-[color:var(--text-mid)]" style={{ borderColor: "var(--border)" }}>
+                <kbd>⌘K</kbd> command palette<br/>
+                <a className="underline" href="/static/dashboard.html">← back to dashboard</a>
+              </div>
+            </aside>
+            <main className="flex-1 overflow-auto">
+              <div className="p-5 max-w-6xl mx-auto fade-in">
+                <div className="flex items-center mb-4">
+                  <h1 className="text-xl font-semibold capitalize">{tab}</h1>
+                  <div className="ml-auto text-xs text-[color:var(--text-mid)]">
+                    <button className="btn btn-ghost" onClick={() => setPalette(true)}>⌘K search</button>
+                  </div>
+                </div>
+                {page}
+              </div>
+            </main>
+            <CommandPalette open={palette} onClose={() => setPalette(false)} onPick={(i) => {
+              if (i.kind === "tab") setTab(i.id.slice(4));
+              else if (i.id === "goto:self") window.open("/api/self-test", "_blank");
+              else if (i.id === "goto:docs") window.open("https://github.com/mybijouai-creator/bijou-monorepo/blob/main/docs/admin-frontend-design.md", "_blank");
+              else if (i.id === "goto:repos") window.open("https://github.com/mybijouai-creator/bijou-monorepo", "_blank");
+            }} />
+          </div>
+        );
       }
 
-      function closeModal() {
-        document.getElementById("qrModal").classList.remove("active");
-        // Reload tenants to update connection status
-        loadTenants();
-      }
-
-      function showError(message) {
-        const errorDiv = document.getElementById("errorMessage");
-        errorDiv.textContent = message;
-        errorDiv.style.display = "block";
-        setTimeout(() => {
-          errorDiv.style.display = "none";
-        }, 5000);
-      }
-
-      // Load tenants on page load
-      loadTenants();
-
-      // Auto-refresh every 30 seconds
-      setInterval(loadTenants, 30000);
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<App />);
     </script>
   </body>
 </html>
