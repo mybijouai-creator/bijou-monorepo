@@ -1,0 +1,51 @@
+# Dockerfile for packages/backend (Bijou AI FastAPI)
+# Build context: repo root
+#   docker build -f Dockerfile.backend -t bijou-backend:latest .
+#
+# Coolify: point a "Docker Compose" service at this repo, set
+#   DOCKERFILE = Dockerfile.backend
+#   PORT = 8080
+#   All env vars from ops/coolify/coolify.env.example
+#
+# Why python:3.12-slim: matches the dev env. slim to keep the image
+# under 200 MB (full torch/cuda are NOT in this image — see
+# requirements.txt warning at the top).
+FROM python:3.12-slim
+
+# System deps for PyPDF2, pillow, pytesseract (no torch/torchaudio here)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    poppler-utils \
+    tesseract-ocr \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python deps first (better layer caching)
+COPY packages/backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy the backend source
+COPY packages/backend/src /app/src
+COPY packages/backend/static /app/static
+COPY packages/backend/migrations-py /app/migrations-py
+
+# Copy the shared Python helpers (if any)
+COPY packages/backend/scripts /app/scripts 2>/dev/null || true
+
+# Non-root user (security: least privilege)
+RUN useradd --create-home --shell /bin/bash bijou
+RUN chown -R bijou:bijou /app
+USER bijou
+
+EXPOSE 8080
+
+# Health-check so Coolify / Docker knows the container is alive
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8080/health || exit 1
+
+# Run uvicorn directly. Coolify auto-detects PORT and we honour it.
+# 4 workers is a good default for a 1-CPU container; tune via env.
+CMD ["sh", "-c", "uvicorn src.core.bijou:app --host 0.0.0.0 --port ${PORT:-8080} --workers ${WEB_CONCURRENCY:-4}"]
