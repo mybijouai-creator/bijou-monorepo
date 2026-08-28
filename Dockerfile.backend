@@ -33,7 +33,10 @@ COPY packages/backend/static /app/static
 COPY packages/backend/migrations-py /app/migrations-py
 
 # Copy the shared Python helpers (if any)
-COPY packages/backend/scripts /app/scripts 2>/dev/null || true
+# The original line `COPY packages/backend/scripts /app/scripts 2>/dev/null || true`
+# is invalid Docker syntax — `2>/dev/null` is shell redirection, not a COPY flag.
+# If the directory is missing, the COPY will fail. Create the dir if it doesn't exist.
+COPY packages/backend/scripts /app/scripts/
 
 # Non-root user (security: least privilege)
 RUN useradd --create-home --shell /bin/bash bijou
