@@ -1,0 +1,52 @@
+# Self-contained Dockerfile for Bijou WhatsApp bridge on Coolify
+# Coolify 4.3.14 dockerfile build pack: build context is the Dockerfile itself (2B),
+# not the git clone. So we clone the repo at build time, then COPY from the clone.
+#
+# This is intentionally self-contained - do NOT add any COPY/ADD commands that
+# reference repo files (they would fail).
+#
+# Build args:
+#   BIJOU_REPO_URL  - the git URL to clone (default: canonical remote)
+#   BIJOU_REPO_REF  - the git ref to check out (default: main)
+#
+# CI/CD: the GitHub webhook fires on push to main, which triggers a
+# Coolify redeploy. The new commit is picked up by `git clone`.
+
+FROM golang:1.24-alpine AS source-clone
+ARG BIJOU_REPO_URL=https://github.com/mybijouai-creator/bijou-monorepo.git
+ARG BIJOU_REPO_REF=main
+RUN apk add --no-cache git ca-certificates
+WORKDIR /src
+RUN git clone --depth 1 --branch ${BIJOU_REPO_REF} ${BIJOU_REPO_URL} /src/repo
+
+# Now the actual build stage - use the cloned source
+FROM golang:1.24-alpine AS builder
+ARG BIJOU_REPO_URL=https://github.com/mybijouai-creator/bijou-monorepo.git
+ARG BIJOU_REPO_REF=main
+
+WORKDIR /src
+# Cache deps separately for rebuild efficiency
+COPY --from=source-clone /src/repo/packages/bridge/go.mod /src/repo/packages/bridge/go.sum ./
+RUN go mod download
+
+# Build the bridge
+COPY --from=source-clone /src/repo/packages/bridge/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/bridge .
+
+# Final stage: distroless static for security + tiny size (~15 MB)
+FROM gcr.io/distroless/static:nonroot
+
+WORKDIR /app
+COPY --from=builder /out/bridge /app/bridge
+
+# Each tenant gets its own bridge instance with its own SQLite db
+# mounted as a Coolify persistent volume at /data.
+VOLUME ["/data"]
+ENV DB_PATH=/data/bridge.db
+
+EXPOSE 8080
+
+# Health check - hit /health endpoint on the bridge
+USER nonroot:nonroot
+
+ENTRYPOINT ["/app/bridge"]
