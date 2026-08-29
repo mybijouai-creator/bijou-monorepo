@@ -1,0 +1,63 @@
+# Self-contained Dockerfile for Coolify - NO repo COPY needed.
+# This is a workaround for Coolify's `dockerfile` field bug: the build
+# context is the Dockerfile itself (2B), not the git clone. So we
+# clone the repo at build time and COPY from inside the clone.
+#
+# This is intentionally self-contained — do NOT add any COPY or ADD
+# commands that reference repo files (they would fail).
+#
+# Build args:
+#   BIIJOU_REPO_URL   - the git URL to clone (default: canonical remote)
+#   BIJOU_REPO_REF   - the git ref to check out (default: main)
+#
+# CI/CD: the GitHub webhook fires on push to main, which triggers a
+# Coolify redeploy. The new commit is picked up by `git clone`.
+
+FROM python:3.12-slim AS source-clone
+ARG BIJOU_REPO_URL=https://github.com/mybijouai-creator/bijou-monorepo.git
+ARG BIJOU_REPO_REF=main
+# Install git for the clone
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git clone --depth 1 --branch ${BIJOU_REPO_REF} ${BIJOU_REPO_URL} /src/repo
+WORKDIR /src/repo/packages/backend
+
+# Now the actual build stage — use the cloned source
+FROM python:3.12-slim
+
+ARG BIJOU_REPO_URL=https://github.com/mybijouai-creator/bijou-monorepo.git
+ARG BIJOU_REPO_REF=main
+
+# System deps for PyPDF2, pillow, pytesseract
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    poppler-utils \
+    tesseract-ocr \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps from the cloned repo
+COPY --from=source-clone /src/repo/packages/backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy source from the cloned repo
+COPY --from=source-clone /src/repo/packages/backend/src /app/src
+COPY --from=source-clone /src/repo/packages/backend/static /app/static
+COPY --from=source-clone /src/repo/packages/backend/migrations-py /app/migrations-py
+COPY --from=source-clone /src/repo/packages/backend/scripts /app/scripts/
+
+WORKDIR /app
+
+# Non-root user
+RUN useradd --create-home --shell /bin/bash bijou && chown -R bijou:bijou /app
+USER bijou
+
+EXPOSE 8080
+
+# Health-check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8080/health || exit 1
+
+# Run uvicorn directly
+CMD ["sh", "-c", "uvicorn src.core.bijou:app --host 0.0.0.0 --port ${PORT:-8080} --workers ${WEB_CONCURRENCY:-4}"]
