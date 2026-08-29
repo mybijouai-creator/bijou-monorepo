@@ -146,7 +146,11 @@ if ($TestEmail -and $TestPassword) {
             -ContentType 'application/json' -Body $loginBody -TimeoutSec 20 -UseBasicParsing
         if ($loginResp.StatusCode -eq 200) {
             $json = ($loginResp.Content | Out-String) | ConvertFrom-Json
-            $jwt = $json.access_token ?? $json.session?.access_token ?? $json.token
+            # PowerShell 5.1 compat: manual null-coalesce (the `??` operator is PS7+)
+            $jwt = $null
+            if ($json.access_token) { $jwt = $json.access_token }
+            elseif ($json.session -and $json.session.access_token) { $jwt = $json.session.access_token }
+            elseif ($json.token) { $jwt = $json.token }
             if ($jwt) {
                 $r = Check -Name '8. POST /api/auth/login' -Url "$baseNoSlash/api/auth/login" `
                     -Method POST -Headers @{} -Body $loginBody `
