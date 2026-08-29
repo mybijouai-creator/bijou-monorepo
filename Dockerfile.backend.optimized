@@ -1,0 +1,37 @@
+# Dockerfile.backend.optimized - CPU-only, no torch/CUDA (saves ~3 GB)
+# Build context: repo root
+#   docker build -f Dockerfile.backend.optimized -t bijou-backend-optimized:latest .
+FROM python:3.12-slim
+
+# System deps for PyPDF2, pillow, pytesseract (no torch)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    poppler-utils \
+    tesseract-ocr \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Use optimized requirements (no torch)
+COPY packages/backend/requirements.optimized.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy backend source
+COPY packages/backend/src /app/src
+COPY packages/backend/static /app/static
+COPY packages/backend/migrations-py /app/migrations-py
+COPY packages/backend/scripts /app/scripts/
+
+# Non-root user
+RUN useradd --create-home --shell /bin/bash bijou
+RUN chown -R bijou:bijou /app
+USER bijou
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8080/health || exit 1
+
+CMD ["sh", "-c", "uvicorn src.core.bijou:app --host 0.0.0.0 --port ${PORT:-8080} --workers ${WEB_CONCURRENCY:-4}"]
