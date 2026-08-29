@@ -43,6 +43,14 @@
     Skip steps 3-4 (only do EPERM fix + restart). Useful when debugging the
     helper bug alone.
 
+.PARAMETER BuildImageIfMissing
+    If the local tar doesn't exist, run `docker build` first. Useful if you
+    deleted the tar but still have Docker + the repo.
+
+.PARAMETER ImageTag
+    The Coolify tag for the backend image. Must match what Coolify's service
+    is configured to pull. Default: bijou-backend:v0.4.8.
+
 .PARAMETER DryRun
     Print every SSH/scp/docker command but don't execute. Use to validate the
     script will run cleanly before committing.
@@ -55,6 +63,9 @@
 
 .EXAMPLE
     .\ops\coolify\finish-coolify-cutover.ps1 -DryRun
+
+.EXAMPLE
+    .\ops\coolify\finish-coolify-cutover.ps1 -BuildImageIfMissing -ImageTag bijou-backend:v0.4.8
 
 .NOTES
     Run from the repo root. Needs an SSH key the Coolify host accepts.
@@ -72,7 +83,11 @@ param(
     [string]$HealthUrl = 'https://app.mybijou.xyz/health',
     [int]$HelperWaitSeconds = 30,
     [int]$HealthTimeoutSeconds = 120,
+    [string]$ImageTag = 'bijou-backend:v0.4.8',
+    [string]$SourceImage = 'bijour-local/bijou-backend-optimized:v0.4.8',
+    [string]$Dockerfile = 'Dockerfile.backend.optimized',
     [switch]$SkipImagePush,
+    [switch]$BuildImageIfMissing,
     [switch]$DryRun
 )
 
@@ -191,20 +206,41 @@ if (-not $SkipImagePush) {
     Write-Step "Step 3: SCP the v0.4.8 tar to the host" 'Cyan'
 
     if (-not (Test-Path $TarFullPath)) {
-        Write-Err "Tar not found at $TarFullPath"
-        Write-Host "    The agent was supposed to build it locally. Run:"
-        Write-Host "      docker build --no-cache -f Dockerfile.backend.optimized -t bijour-local/bijou-backend-optimized:v0.4.8 ."
-        Write-Host "      docker save -o $TarFullPath bijour-local/bijou-backend-optimized:v0.4.8"
-        exit 1
+        if ($BuildImageIfMissing -and -not $DryRun) {
+            Write-Warn "Tar not found at $TarFullPath -- building image locally"
+            $buildStart = Get-Date
+            & docker build --no-cache -f $Dockerfile -t $SourceImage .
+            if ($LASTEXITCODE -ne 0) { Write-Err "docker build failed"; exit 1 }
+            & docker save -o $TarFullPath $SourceImage
+            if ($LASTEXITCODE -ne 0) { Write-Err "docker save failed"; exit 1 }
+            $buildElapsed = [Math]::Round(((Get-Date) - $buildStart).TotalSeconds)
+            $buildSize = (Get-Item $TarFullPath).Length
+            $buildMB = [Math]::Round($buildSize / 1048576, 1)
+            $buildMsg = ("built + saved in {0}s ({1} MB)" -f $buildElapsed, $buildMB)
+            Write-OK $buildMsg
+        } else {
+            Write-Err "Tar not found at $TarFullPath. Either:"
+            Write-Host "    1. The agent was supposed to build it â€” re-run without -SkipImagePush"
+            Write-Host "    2. Run with -BuildImageIfMissing to auto-build via docker"
+            Write-Host "    3. Manually:"
+            Write-Host "         docker build --no-cache -f $Dockerfile -t $SourceImage ."
+            Write-Host "         docker save -o $TarFullPath $SourceImage"
+            exit 1
+        }
     }
 
-    $remoteTar = "/tmp/bijou-backend-optimized-v0.4.8.tar"
+    $tarFileName = Split-Path -Leaf $TarFullPath
+    $remoteTar = "/tmp/$tarFileName"
     try {
         Run-Or-Print ("scp {0} {1}:{2}" -f $TarFullPath, $sshTarget, $remoteTar) {
             & scp @sshOpts $TarFullPath ("${sshTarget}:${remoteTar}")
             if ($LASTEXITCODE -ne 0) { throw "scp exit $LASTEXITCODE" }
         }
-        if (-not $DryRun) { Write-OK "scp done" }
+        if (-not $DryRun) {
+            $sizeBytes = (Get-Item $TarFullPath).Length
+            $sizeMB = [Math]::Round($sizeBytes / 1048576, 1)
+            Write-Host "    [OK]   scp done - size $sizeMB MB" -ForegroundColor Green
+        }
     } catch {
         Write-Err "scp failed: $($_.Exception.Message)"
         exit 1
@@ -213,13 +249,31 @@ if (-not $SkipImagePush) {
     Write-Step "Step 4: SSH: docker load + tag" 'Cyan'
 
     try {
-        $loadCmd = 'set -e; cd /tmp; sudo docker load -i bijou-backend-optimized-v0.4.8.tar; sudo docker tag bijour-local/bijou-backend-optimized:v0.4.8 bijou-backend:v0.4.8; sudo docker images | grep -E "bijou-backend"'
+        # Use single-quoted remote command; bash on the host does the variable expansion
+        $loadCmd = "set -e; cd /tmp; sudo docker load -i $tarFileName; sudo docker tag $SourceImage $ImageTag; echo '---'; sudo docker images | grep -E 'bijou-backend'"
         $out = Invoke-Ssh -Target $sshTarget -Opts $sshOpts -RemoteCommand $loadCmd
         if (-not $DryRun) { $out | ForEach-Object { Write-Host "    $_" } }
-        Write-OK "image loaded + tagged as bijou-backend:v0.4.8"
+        Write-OK ("image loaded + tagged as {0}" -f $ImageTag)
     } catch {
         Write-Err "docker load failed: $($_.Exception.Message)"
         exit 1
+    }
+
+    # Verify the image is visible to Coolify
+    if (-not $DryRun -and $tok) {
+        Write-Host "  Verifying Coolify sees the image..."
+        try {
+            $svc = Invoke-RestMethod -Uri "https://coolify.getbijou.xyz/api/v1/services/$BackendSvcUuid" -Headers @{Authorization="Bearer $tok"} -TimeoutSec 10
+            $expectedTag = $ImageTag.Split(':')[1]
+            $remoteTag = $svc.applications[0].image.Split(':')[-1]
+            if ($remoteTag -eq $expectedTag) {
+                Write-OK "Coolify reports the service image as $($svc.applications[0].image)"
+            } else {
+                Write-Warn "Coolify image registry shows v$remoteTag (wanted $expectedTag). May need a moment to refresh, or re-trigger step 5."
+            }
+        } catch {
+            Write-Warn "Could not verify via Coolify API: $($_.Exception.Message)"
+        }
     }
 } else {
     Write-Step "Step 3-4: skipped (SkipImagePush)" 'DarkGray'
@@ -250,6 +304,7 @@ $deadline = (Get-Date).AddSeconds($HealthTimeoutSeconds)
 $ok = $false
 $attempt = 0
 $lastStatus = '-'
+$deployedVersion = ''
 while ((Get-Date) -lt $deadline) {
     $attempt++
     if ($DryRun) { Write-Host "    [DRY-RUN] would GET $HealthUrl"; $ok = $true; break }
@@ -257,9 +312,18 @@ while ((Get-Date) -lt $deadline) {
         $r = Invoke-WebRequest -Uri $HealthUrl -UseBasicParsing -TimeoutSec 5
         $lastStatus = $r.StatusCode
         if ($r.StatusCode -eq 200) {
-            Write-OK "$HealthUrl -> 200 (healthy, attempt $attempt, $($r.Content.Length) bytes)"
-            $r.Content | Out-String | Select-Object -First 1 | ForEach-Object { Write-Host "      body: $_" }
+            $healthBytes = $r.Content.Length
+            $healthMsg = "$HealthUrl -> 200 (healthy, attempt $attempt, $healthBytes bytes)"
+            Write-OK $healthMsg
+            $firstLine = ($r.Content | Out-String).Split("`n")[0]
+            Write-Host "      body: $firstLine"
             $ok = $true
+            # parse the deployed version for the summary
+            try {
+                $j = $r.Content | ConvertFrom-Json -ErrorAction Stop
+                if ($j.version) { $deployedVersion = $j.version }
+                if ($j.database) { Write-Host "      db: $($j.database)" }
+            } catch {}
             break
         }
     } catch {
@@ -273,6 +337,25 @@ if (-not $ok) {
     Write-Host "    The image may have started but is still initializing. Try -HealthTimeoutSeconds 180."
 }
 
+# --- step 7: verify the P0 fix endpoints are now live (sanity check) -------
+if (-not $DryRun -and $ok) {
+    Write-Step "Step 7: verify P0 endpoints are live" 'Cyan'
+    foreach ($endpoint in @('/api/menu/permissions', '/api/self-test/summary')) {
+        try {
+            $r = Invoke-WebRequest -Uri ("https://app.mybijou.xyz" + $endpoint) -UseBasicParsing -TimeoutSec 10
+            if ($r.StatusCode -eq 200) {
+                Write-OK "GET $endpoint -> 200 (was 404 before deploy)"
+            } else {
+                Write-Warn "GET $endpoint -> $($r.StatusCode) (expected 200)"
+            }
+        } catch {
+            $code = $null
+            try { $code = $_.Exception.Response.StatusCode.value__ } catch {}
+            Write-Warn "GET $endpoint -> $code : $($_.Exception.Message)"
+        }
+    }
+}
+
 # --- summary ---------------------------------------------------------------
 
 Write-Step "Summary" 'Magenta'
@@ -280,9 +363,13 @@ Write-Host "  chmod docker.sock + restart helper: $(if ($DryRun) {'DRY-RUN'} els
 if (-not $SkipImagePush) {
     Write-Host "  SCP v0.4.8 tar:                    $(if ($DryRun) {'DRY-RUN'} else {'OK'})"
     Write-Host "  docker load + tag:                  $(if ($DryRun) {'DRY-RUN'} else {'OK'})"
+    Write-Host "  Coolify image check:                $(if ($DryRun) {'DRY-RUN'} else {'OK'})"
 }
 Write-Host "  POST /services/start:               $(if ($DryRun) {'DRY-RUN'} elseif ($tok) {'ATTEMPTED'} else {'SKIPPED (no token)'})"
-Write-Host "  /health probe:                      $(if ($ok) {'OK'} elseif ($DryRun) {'DRY-RUN'} else {'FAILED'})"
+$healthLine = if ($ok) {
+        if ([string]::IsNullOrEmpty($deployedVersion)) { 'OK' } else { "OK (v$deployedVersion)" }
+    } elseif ($DryRun) { 'DRY-RUN' } else { 'FAILED' }
+Write-Host "  /health probe:                      $healthLine"
 
 if (-not $ok -and -not $DryRun) {
     Write-Host ""
