@@ -1,0 +1,224 @@
+{
+  "_comment": "Bijou Coolify env-group TEMPLATE. Every value here is a placeholder. Copy this file, fill in real values (NEVER commit the filled-in version), and feed to migrate-secrets-to-coolify.ps1 via -EnvFilePath, OR import directly via the Coolify API: POST /api/v1/envs/<group-uuid> with { key, value, is_required, is_runtime } per row. The migrate script handles create-or-update for each key.",
+  "_created": "2026-08-29",
+  "_created_by": "root Mavis (mvs_3ea9deea239746eeb0e4c56426bbd92e)",
+  "_source_of_truth": "ops/coolify/PRODUCTION-CUTOVER-PLAN.md §3 step 2 + packages/backend/requirements.txt + .env.example",
+  "group_name": "bijou-prod",
+  "description": "Production env for the Bijou Coolify stack. Mirrored to Infisical as project 'bijou-prod' environment 'production' (if INFISICAL_TOKEN is set).",
+  "vars": [
+    {
+      "key": "SUPABASE_URL",
+      "required": true,
+      "source": "https://supabase.com/dashboard → project lrwzlujomukzjykafmic → Settings → API",
+      "example": "https://lrwzlujomukzjykafmic.supabase.co"
+    },
+    {
+      "key": "SUPABASE_SERVICE_KEY",
+      "required": true,
+      "secret": true,
+      "source": "same as SUPABASE_URL — the `service_role` key (NOT the anon key)",
+      "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.<redacted>"
+    },
+    {
+      "key": "SUPABASE_ANON_KEY",
+      "required": true,
+      "secret": true,
+      "source": "Same dashboard, the `anon` public key — used in static/login.html for GoTrue OAuth"
+    },
+    {
+      "key": "PUBLIC_URL",
+      "required": true,
+      "source": "Canonical domain. Per CLAUDE.md, NEVER override with a stale Fly secret like LOGIN_URL/APP_URL/DASHBOARD_URI.",
+      "value": "https://app.mybijou.xyz"
+    },
+    {
+      "key": "GEMINI_API_KEY",
+      "required": true,
+      "secret": true,
+      "source": "https://aistudio.google.com/app/apikey"
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "required": true,
+      "secret": true,
+      "source": "https://dashboard.stripe.com/apikeys — use LIVE for prod",
+      "example_prefix": "sk_live_"
+    },
+    {
+      "key": "STRIPE_WEBHOOK_SECRET",
+      "required": true,
+      "secret": true,
+      "source": "Stripe dashboard → Developers → Webhooks → your endpoint → Signing secret",
+      "example_prefix": "whsec_"
+    },
+    {
+      "key": "RESEND_API_KEY",
+      "required": true,
+      "secret": true,
+      "source": "https://resend.com/api-keys",
+      "example_prefix": "re_"
+    },
+    {
+      "key": "EMAIL_FROM",
+      "required": true,
+      "value": "Bijou <no-reply@mybijou.xyz>"
+    },
+    {
+      "key": "EMAIL_NOTIFY",
+      "required": true,
+      "value": "founder@mybijou.xyz"
+    },
+    {
+      "key": "FOUNDER_EMAIL",
+      "required": true,
+      "value": "founder@mybijou.xyz"
+    },
+    {
+      "key": "BRIDGE_SHARED_SECRET",
+      "required": true,
+      "secret": true,
+      "source": "Generate with: openssl rand -hex 32. The bridge sends this on every webhook to the backend; backend verifies."
+    },
+    {
+      "key": "ADMIN_API_KEY",
+      "required": true,
+      "secret": true,
+      "source": "Used by /static/admin.html (X-Admin-Key header) and the admin MCP server. Generate with: openssl rand -hex 32."
+    },
+    {
+      "key": "APPWRITE_ENDPOINT",
+      "required": true,
+      "value": "https://appwrite.getbijou.xyz/v1"
+    },
+    {
+      "key": "APPWRITE_PROJECT_ID",
+      "required": true,
+      "value": "6a90f200002b5ce52621"
+    },
+    {
+      "key": "APPWRITE_API_KEY",
+      "required": true,
+      "secret": true,
+      "source": "Already in bijoux-monorepo/settings.json (key prefix standard_). Verify it's still valid in the Appwrite console."
+    },
+    {
+      "key": "ENABLE_APPWRITE_STORAGE",
+      "required": false,
+      "value": "false",
+      "note": "Set to true ONLY after the bucket 'bijou-kb-files' is created in Appwrite Storage (one-time bootstrap). Default is false → local-fs storage in packages/backend/uploads/."
+    },
+    {
+      "key": "APPWRITE_STORAGE_BUCKET",
+      "required": false,
+      "value": "bijou-kb-files"
+    },
+    {
+      "key": "APPWRITE_STORAGE_PUBLIC_READ",
+      "required": false,
+      "value": "false"
+    },
+    {
+      "key": "NANGO_SECRET_KEY",
+      "required": false,
+      "secret": true,
+      "source": "https://app.nango.dev → Environment Settings. Leave blank to disable the Integrations tab."
+    },
+    {
+      "key": "TELNYX_API_KEY",
+      "required": false,
+      "secret": true,
+      "source": "https://portal.telnyx.com → Auth. The current key is still on disk in plaintext per STATUS_2026-08-23 §6 — owner action to rotate."
+    },
+    {
+      "key": "TELNYX_WEBHOOK_SECRET",
+      "required": false,
+      "secret": true
+    },
+    {
+      "key": "CALCOM_CLIENT_ID",
+      "required": false,
+      "secret": true
+    },
+    {
+      "key": "CALCOM_CLIENT_SECRET",
+      "required": false,
+      "secret": true
+    },
+    {
+      "key": "LANGFUSE_ENABLED",
+      "required": false,
+      "value": "true"
+    },
+    {
+      "key": "LANGFUSE_PUBLIC_KEY",
+      "required": false,
+      "secret": true,
+      "source": "After langfuse-web is up at its Coolify hostname, sign up at /auth/sign-up, copy the pk-lf-… key"
+    },
+    {
+      "key": "LANGFUSE_SECRET_KEY",
+      "required": false,
+      "secret": true,
+      "source": "Same as LANGFUSE_PUBLIC_KEY, the sk-lf-… secret"
+    },
+    {
+      "key": "LANGFUSE_HOST",
+      "required": false,
+      "value": "http://langfuse-web:3000",
+      "note": "The docker-compose service name. If langfuse is on a different host, set to the full URL."
+    },
+    {
+      "key": "LANGFUSE_ENVIRONMENT",
+      "required": false,
+      "value": "production"
+    },
+    {
+      "key": "LANGFUSE_SAMPLE_RATE",
+      "required": false,
+      "value": "1.0"
+    },
+    {
+      "key": "LANGFUSE_MASK_PII",
+      "required": false,
+      "value": "true"
+    },
+    {
+      "key": "LANGFUSE_NEXTAUTH_SECRET",
+      "required": true,
+      "secret": true,
+      "source": "Generate with: openssl rand -hex 32. Must be 32+ chars."
+    },
+    {
+      "key": "LANGFUSE_SALT",
+      "required": true,
+      "secret": true,
+      "source": "Generate with: openssl rand -hex 16"
+    },
+    {
+      "key": "LOG_LEVEL",
+      "required": false,
+      "value": "INFO"
+    },
+    {
+      "key": "SENTRY_DSN",
+      "required": false,
+      "secret": true
+    },
+    {
+      "key": "ENABLE_COMPOSIO",
+      "required": false,
+      "value": "false",
+      "note": "Per CLAUDE.md 2026-08-23: Composio was replaced by Nango. Keep this false."
+    }
+  ],
+  "post_create_actions": [
+    "Run packages/backend/scripts/apply_migrations.py against the Supabase project to apply the 10 SQL migrations (the script is idempotent).",
+    "Bootstrap the Appwrite storage bucket if ENABLE_APPWRITE_STORAGE=true: from the Appwrite console, create bucket 'bijou-kb-files' with the read-permission rule you want (default deny for non-tenant files).",
+    "Set the corresponding env vars in the bridge service (packages/bridge/) — BRIDGE_SHARED_SECRET, BIJOU_BACKEND_URL=https://app.mybijou.xyz, BIJOU_BACKEND_API_KEY (same as BRIDGE_SHARED_SECRET), DB_PATH, WHATSAPP_SESSION_PATH."
+  ],
+  "verify_after_apply": [
+    "curl -fsS https://app.mybijou.xyz/health → 200 + service=bijou-ai-enterprise",
+    "curl -fsS https://app.mybijou.xyz/api/self-test/summary → 200 + overall=pass",
+    "ops/coolify/smoke-test-prod.ps1 -BaseUrl https://app.mybijou.xyz → all 9 checks green"
+  ]
+}
