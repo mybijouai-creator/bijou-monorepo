@@ -299,8 +299,18 @@ except ImportError as e:
 # Configure logging with UTF-8 encoding for Windows
 import io
 
-log_file_path = os.getenv("LOG_FILE", "/data/logs/bijou.log")
-os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+# Resolve the log path safely. In Docker the slim images run as non-root and
+# `/data` is owned by root unless the Dockerfile mkdir+chowns it explicitly.
+# If the explicit `/data/logs/bijou.log` path is not writable, fall back to
+# `/tmp/bijou.log` so the container can always boot. Operators who want
+# persistent logs at /data/logs should still set LOG_FILE in the env group
+# AND ensure the volume is writable by the `bijou` user.
+_default_log_dir = os.getenv("BIJOU_LOG_DIR", "/data/logs")
+log_file_path = os.getenv("LOG_FILE") or os.path.join(_default_log_dir, "bijou.log")
+try:
+    os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+except (PermissionError, OSError):
+    log_file_path = "/tmp/bijou.log"
 
 # Create UTF-8 stream handler for console
 console_handler = logging.StreamHandler(sys.stdout)
@@ -7325,6 +7335,37 @@ async def status():
             "multi_tenant": True,
             "supabase": os.getenv("DB_TYPE") == "supabase",
         },
+    }
+
+
+# ============================================================================
+# Menu / sidebar permissions — issue surfaced by smoke test #3 (2026-08-30)
+# ============================================================================
+# The dashboard sidebar (static/dashboard.html) renders menu items by id.
+# The frontend fetches this endpoint to know which items the current user
+# (tenant) is allowed to see. Items map 1:1 to the sidebar entries.
+@app.get("/api/menu/permissions")
+async def menu_permissions():
+    """Return the 11 sidebar menu items with default visibility for any tenant.
+
+    Items are kept in display order. Each item carries an id, label, and the
+    default enabled flag. Tenant-specific overrides (e.g. hide billing for
+    non-payers) are layered on later via a separate override endpoint.
+    """
+    return {
+        "menu": [
+            {"id": "home",          "label": "Home",          "enabled": True,  "icon": "home"},
+            {"id": "customers",     "label": "Customers",     "enabled": True,  "icon": "users"},
+            {"id": "conversations", "label": "Conversations", "enabled": True,  "icon": "chat"},
+            {"id": "ai",            "label": "AI Settings",   "enabled": True,  "icon": "sparkles"},
+            {"id": "kb",            "label": "Knowledge Base","enabled": True,  "icon": "book"},
+            {"id": "integrations",  "label": "Integrations",  "enabled": True,  "icon": "plug"},
+            {"id": "billing",       "label": "Billing",       "enabled": True,  "icon": "credit-card"},
+            {"id": "settings",      "label": "Settings",      "enabled": True,  "icon": "cog"},
+            {"id": "health",        "label": "Health",        "enabled": True,  "icon": "heart-pulse"},
+            {"id": "updates",       "label": "Updates",       "enabled": True,  "icon": "megaphone"},
+            {"id": "help",          "label": "Help",          "enabled": True,  "icon": "help-circle"},
+        ]
     }
 
 
