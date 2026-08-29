@@ -1,4 +1,4 @@
-# Backend 500 Error Verification Script
+﻿# Backend 500 Error Verification Script
 # Run this to test all endpoints that were showing 500 errors
 # Author: Bijou AI QA Team
 

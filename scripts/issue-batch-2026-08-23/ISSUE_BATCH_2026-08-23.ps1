@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # Issue batch — Bijou AI — 2026-08-23
 # Generated from: docs/superpowers/specs/2026-08-23-competitive-teardown-and-genui-roadmap.md
 # Run: pwsh -File .github/ISSUE_BATCH_2026-08-23.md
