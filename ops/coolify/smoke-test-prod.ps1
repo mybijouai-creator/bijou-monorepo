@@ -1,4 +1,4 @@
-# smoke-test-prod.ps1 — Run the 9 checks that prove the Bijou stack
+﻿# smoke-test-prod.ps1 — Run the 9 checks that prove the Bijou stack
 # is healthy on a given URL. The user said "confirm all sign in,
 # signup, dashboard, AI access, every menu pages" — this is the
 # automatable part. The visual / UX part must be done by a human or
@@ -22,7 +22,7 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, Position = 0)]
     [string]$BaseUrl,
 
     [string]$TestEmail = $env:BIJOU_SMOKE_EMAIL,
@@ -34,6 +34,22 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+
+# Validate BaseUrl is non-empty + parseable before doing any network work.
+# If -BaseUrl was not actually bound (a PS5.1 quirk when invoking via
+# `.\script.ps1` with a positional arg in some environments), the
+# Mandatory attribute may not have prompted; this catches that case.
+if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
+    Write-Host "[ERROR] -BaseUrl is required. Usage: .\smoke-test-prod.ps1 -BaseUrl https://app.mybijou.xyz" -ForegroundColor Red
+    exit 2
+}
+try {
+    $null = [System.Uri]$BaseUrl
+} catch {
+    Write-Host "[ERROR] -BaseUrl is not a valid URI: $BaseUrl" -ForegroundColor Red
+    exit 2
+}
+
 $results = @()
 
 function Log {
@@ -67,6 +83,7 @@ function Check {
             $reqParams['Body'] = $Body
             $reqParams['ContentType'] = 'application/json'
         }
+        Write-Verbose "Check[$Name] url=[$Url] method=[$Method]"
         $resp = Invoke-WebRequest @reqParams -ErrorAction Stop
         $latency = [math]::Round(((Get-Date) - $start).TotalMilliseconds, 0)
         $result.LatencyMs = $latency
@@ -100,7 +117,12 @@ function Check {
 }
 
 Log "smoke-test-prod.ps1 — checking $BaseUrl"
-$baseNoSlash = $BaseUrl.TrimEnd('/')
+try {
+    $baseNoSlash = $BaseUrl.TrimEnd('/')
+} catch {
+    Write-Host "[ERROR] -BaseUrl invalid: $($_.Exception.Message)" -ForegroundColor Red
+    exit 2
+}
 
 # ─── 1. Health ────────────────────────────────────────────────────────
 $r = Check -Name '1. /health' -Url "$baseNoSlash/health" `
