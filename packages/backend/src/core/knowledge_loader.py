@@ -38,10 +38,14 @@ class KnowledgeLoader:
 
     def load_system_prompt(self) -> str:
         """
-        Load the W3J-specific system prompt.
+        Load the canonical Bijou AI system prompt.
+
+        This is the MANGGLISH sales persona, mirrored at
+        packages/landing/api/chat.js (the Vercel landing widget).
+        Edit both files together when the persona changes.
 
         Returns:
-            str: Complete system prompt with W3J knowledge
+            str: Complete system prompt with Bijou AI knowledge
         """
         prompt_file = self.base_path / "bijou_system_prompt.txt"
 
@@ -50,7 +54,7 @@ class KnowledgeLoader:
                 self.system_prompt = f.read()
                 self.last_loaded = time.time()
                 print(
-                    f"[OK] Loaded W3J system prompt ({len(self.system_prompt)} chars)"
+                    f"[OK] Loaded Bijou AI system prompt ({len(self.system_prompt)} chars)"
                 )
                 return self.system_prompt
         except FileNotFoundError:
@@ -62,21 +66,24 @@ class KnowledgeLoader:
 
     def _get_fallback_prompt(self) -> str:
         """
-        Fallback system prompt if file is not found.
+        Fallback system prompt if `bijou_system_prompt.txt` is not found.
+
+        Intentionally minimal — just enough to keep the bot in the canonical
+        Bijou AI voice. The full persona is loaded from disk on app start;
+        if you see this in production, restore the canonical file.
 
         Returns:
-            str: Basic system prompt
+            str: Basic Bijou AI prompt (Manglish)
         """
-        return """You are Bijou, an AI assistant for W3J Consulting.
+        return """You are Bijou, an AI Digital Employee for Malaysian businesses built by Bijou AI.
 
-You help manage inquiries about W3J's services, products, and founder Jewel (Muhammad Nurunnabi).
+Reply in Manglish always. Be friendly, helpful, and transparent about being an AI.
 
-Be professional, helpful, and transparent about being an AI assistant.
+Plan: PRO at RM299/month. 30-day money-back guarantee. No setup fee.
+Trial: 14 days free, no card required.
 
-Contact: gwadmin@w3jdev.com
-Website: https://w3jdev.com
-
-When in doubt, offer to connect the user with Jewel directly.
+Contact: jewel@mybijou.xyz | wa.me/60174106981
+Website: https://mybijou.xyz
 """
 
     def get_interaction_rules(self) -> Dict[str, any]:

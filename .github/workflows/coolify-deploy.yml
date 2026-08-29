@@ -1,0 +1,248 @@
+# Coolify deploy — replaces the Fly.io deploy jobs that became billing-locked
+# on 2026-08-23. Runs on push to main and on manual dispatch.
+#
+# Pipeline:
+#   1. Build + lint + test (matches backend.yml)
+#   2. Build 3 Docker images (backend optimized, agentops, bridge)
+#   3. Save tars as GH artifacts (keeps them for 7 days for inspection)
+#   4. (optionally) SCP tars to Coolify host via SSH deploy key
+#   5. Trigger Coolify API to start each service with the new image
+#   6. Poll the /health endpoints and report
+#
+# Required GitHub secrets (set in repo Settings → Secrets):
+#   COOLIFY_API_TOKEN              — Coolify PAT (from C:\Users\W3jde\.hermes\mcp_config.json)
+#   COOLIFY_BACKEND_SVC_UUID       — uuid of bijou-backend-svc
+#   COOLIFY_AGENTOPS_SVC_UUID      — uuid of agentops-dashboard-svc
+#   COOLIFY_SSH_PRIVATE_KEY        — SSH key authorized on 169.58.147.169 root
+#   GITHUB_PAT_TOKEN               — fine-grained PAT to clone private agentops repo
+#
+# Required GitHub variables (Settings → Variables):
+#   COOLIFY_BASE_URL               — default https://coolify.getbijou.xyz
+#   COOLIFY_SSH_HOST               — default 169.58.147.169
+#   COOLIFY_SSH_USER               — default root
+#
+# NOTE: This workflow uses Coolify's API to *trigger a deploy* — it does NOT
+# have Coolify build the image from source. The pre-built tars in
+# ops/coolify/ are the source of truth; CI rebuilds them and the deploy
+# job SCPs them to the host so docker load can make them visible to Coolify.
+
+name: coolify-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile.backend.optimized'
+      - 'Dockerfile.agentops.coolify'
+      - 'Dockerfile.bridge.coolify'
+      - 'packages/backend/**'
+      - 'packages/bridge/**'
+      - '.github/workflows/coolify-deploy.yml'
+      - 'ops/coolify/deploy-coolify.ps1'
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Which service to deploy'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - backend
+          - agentops
+      with_scp:
+        description: 'Also SCP tars to Coolify host + docker load'
+        required: true
+        default: 'true'
+        type: boolean
+      tag_suffix:
+        description: 'Image tag suffix (empty for prod)'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: coolify-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build 3 Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR (so we can pull the agentops base image if needed)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build backend optimized image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.backend.optimized
+          tags: |
+            bijour-local/bijou-backend-optimized:v0.4.7${{ inputs.tag_suffix }}
+            bijour-local/bijou-backend-optimized:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Build agentops image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.agentops.coolify
+          tags: |
+            bijour-local/agentops-backend:v0.4.7${{ inputs.tag_suffix }}
+            bijour-local/agentops-backend:latest
+          build-args: |
+            AGENTOPS_REPO_URL=https://x-access-token:${{ secrets.GITHUB_PAT_TOKEN }}@github.com/mybijouai-creator/agentops-platform.git
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Build bridge image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.bridge.coolify
+          tags: |
+            bijour-local/bijou-bridge:v1.0.2${{ inputs.tag_suffix }}
+            bijour-local/bijou-bridge:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Save tars
+        run: |
+          mkdir -p ops/coolify
+          docker save -o ops/coolify/bijou-backend-optimized-v0.4.7${{ inputs.tag_suffix }}.tar bijour-local/bijou-backend-optimized:v0.4.7${{ inputs.tag_suffix }}
+          docker save -o ops/coolify/agentops-backend-v0.4.7${{ inputs.tag_suffix }}.tar bijour-local/agentops-backend:v0.4.7${{ inputs.tag_suffix }}
+          docker save -o ops/coolify/bijou-bridge-v1.0.2${{ inputs.tag_suffix }}.tar bijour-local/bijou-bridge:v1.0.2${{ inputs.tag_suffix }}
+          ls -lh ops/coolify/*.tar
+
+      - name: Upload tars as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coolify-tars-${{ inputs.tag_suffix || 'prod' }}
+          path: ops/coolify/*.tar
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy:
+    name: Deploy to Coolify
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production  # requires approval if branch protection is set
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download tars artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: coolify-tars-${{ inputs.tag_suffix || 'prod' }}
+          path: ops/coolify/
+
+      - name: Setup SSH key
+        if: ${{ inputs.with_scp }}
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.COOLIFY_SSH_PRIVATE_KEY }}
+
+      - name: Add Coolify host to known_hosts
+        if: ${{ inputs.with_scp }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ vars.COOLIFY_SSH_HOST || '169.58.147.169' }} >> ~/.ssh/known_hosts
+
+      - name: SCP tars to Coolify host
+        if: ${{ inputs.with_scp }}
+        env:
+          COOLIFY_SSH_HOST: ${{ vars.COOLIFY_SSH_HOST || '169.58.147.169' }}
+          COOLIFY_SSH_USER: ${{ vars.COOLIFY_SSH_USER || 'root' }}
+          TAG_SUFFIX: ${{ inputs.tag_suffix }}
+        run: |
+          for tar in ops/coolify/*.tar; do
+            echo "  -> $tar"
+            scp $tar ${COOLIFY_SSH_USER}@${COOLIFY_SSH_HOST}:/tmp/$(basename $tar)
+          done
+
+      - name: SSH to host: docker load + tag
+        if: ${{ inputs.with_scp }}
+        env:
+          COOLIFY_SSH_HOST: ${{ vars.COOLIFY_SSH_HOST || '169.58.147.169' }}
+          COOLIFY_SSH_USER: ${{ vars.COOLIFY_SSH_USER || 'root' }}
+          TAG_SUFFIX: ${{ inputs.tag_suffix }}
+        run: |
+          ssh ${COOLIFY_SSH_USER}@${COOLIFY_SSH_HOST} '
+            set -e
+            cd /tmp
+            docker load -i bijou-backend-optimized-v0.4.7'"${TAG_SUFFIX}"'.tar
+            docker tag bijour-local/bijou-backend-optimized:v0.4.7'"${TAG_SUFFIX}"' bijou-backend:v0.4.7'"${TAG_SUFFIX}"'
+            docker load -i agentops-backend-v0.4.7'"${TAG_SUFFIX}"'.tar
+            docker tag bijour-local/agentops-backend:v0.4.7'"${TAG_SUFFIX}"' agentops-backend:v0.4.7'"${TAG_SUFFIX}"'
+            docker load -i bijou-bridge-v1.0.2'"${TAG_SUFFIX}"'.tar
+            docker tag bijour-local/bijou-bridge:v1.0.2'"${TAG_SUFFIX}"' bijou-bridge:v1.0.2'"${TAG_SUFFIX}"'
+            docker images | grep -E "bijou-backend|agentops-backend|bijou-bridge"
+          '
+
+      - name: Trigger Coolify deploy
+        env:
+          COOLIFY_BASE_URL: ${{ vars.COOLIFY_BASE_URL || 'https://coolify.getbijou.xyz' }}
+          COOLIFY_API_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          BACKEND_SVC: ${{ secrets.COOLIFY_BACKEND_SVC_UUID }}
+          AGENTOPS_SVC: ${{ secrets.COOLIFY_AGENTOPS_SVC_UUID }}
+          SERVICE: ${{ inputs.service || 'all' }}
+        run: |
+          if [[ "$SERVICE" == "all" || "$SERVICE" == "backend" ]]; then
+            echo "Triggering backend deploy ($BACKEND_SVC)..."
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $COOLIFY_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{}' \
+              "$COOLIFY_BASE_URL/api/v1/services/$BACKEND_SVC/start"
+            echo
+          fi
+          if [[ "$SERVICE" == "all" || "$SERVICE" == "agentops" ]]; then
+            echo "Triggering agentops deploy ($AGENTOPS_SVC)..."
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $COOLIFY_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{}' \
+              "$COOLIFY_BASE_URL/api/v1/services/$AGENTOPS_SVC/start"
+            echo
+          fi
+
+      - name: Poll /health
+        env:
+          BACKEND_URL: ${{ vars.BIJOU_HEALTHCHECK_URL || 'https://app.mybijou.xyz/health' }}
+          AGENTOPS_URL: 'https://agentops.getbijou.xyz/health'
+          SERVICE: ${{ inputs.service || 'all' }}
+        run: |
+          deadline=$(( $(date +%s) + 120 ))
+          if [[ "$SERVICE" == "all" || "$SERVICE" == "backend" ]]; then
+            while (( $(date +%s) < deadline )); do
+              code=$(curl -fsS -o /dev/null -w '%{http_code}' "$BACKEND_URL" || true)
+              if [[ "$code" == "200" ]]; then echo "backend OK"; break; fi
+              sleep 5
+            done
+            if [[ "$code" != "200" ]]; then echo "backend did not become healthy"; exit 1; fi
+          fi
+          if [[ "$SERVICE" == "all" || "$SERVICE" == "agentops" ]]; then
+            while (( $(date +%s) < deadline )); do
+              code=$(curl -fsS -o /dev/null -w '%{http_code}' "$AGENTOPS_URL" || true)
+              if [[ "$code" == "200" ]]; then echo "agentops OK"; break; fi
+              sleep 5
+            done
+            if [[ "$code" != "200" ]]; then echo "agentops did not become healthy"; exit 1; fi
+          fi

@@ -153,6 +153,32 @@ Thumbs.db
 .zed/
 
 # =============================================================================
+# Coolify cutover — build artifacts + ephemeral state (added 2026-08-30)
+# These are docker image tars + PID/UUID scratch files. The tars are also
+# stored separately on the Coolify host after `docker load`. Keep them
+# OUT of git to avoid 1+ GB commits.
+#
+# `.envs-backup.json` is the original Bijou prod env captured before the
+# cutover (has SUPABASE_SERVICE_KEY, STRIPE_SECRET_KEY, etc.). MUST stay
+# out of git — the same data is mirrored into Coolify via
+# `migrate-secrets-to-coolify.ps1` and never lives in the repo.
+# =============================================================================
+ops/coolify/*.tar
+ops/coolify/.build-pid
+ops/coolify/.bridge-build-pid
+ops/coolify/.agentops-build-pid
+ops/coolify/.opt-build-pid
+ops/coolify/.test-uuid
+ops/coolify/.agentops-uuid
+ops/coolify/.agentops-svc-uuid
+ops/coolify/.bijou-svc-uuid
+ops/coolify/.bridge-uuid
+ops/coolify/.synthesized.env
+ops/coolify/.push-report.py
+ops/coolify/.push.py.bak
+ops/coolify/.envs-backup.json
+
+# =============================================================================
 # Build artifacts per package
 # =============================================================================
 packages/landing/dist/

@@ -31,10 +31,11 @@ export default async function handler(req, res) {
     const systemInstruction = `
       // === CANONICAL BIJOU PERSONA ===
       // This is the authoritative Bijou AI persona. Mirrored in the app project at
-      // w3j-bijou-enterprise/src/core/bijou_system_prompt.txt (Python side).
+      // packages/backend/src/core/bijou_system_prompt.txt (Python side).
       // Edit both files together when the persona changes. The previous W3J-specific
       // persona (property/recruiting, RM150/hr consulting) is preserved in the app
-      // project as bijou_system_prompt.w3j-legacy.txt.
+      // project as bijou_system_prompt.w3j-legacy.txt.disabled (DEPRECATED — do
+      // not load; kept only as a reference for a future "W3J Support" tenant template).
       You are Bijou, an AI Digital Employee for Malaysian businesses built by Bijou AI.
 
       CRITICAL RULE — MANGLISH ALWAYS:
