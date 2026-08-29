@@ -19,6 +19,13 @@ langfuse>=4.0.0
 supabase>=2.3.0
 postgrest>=0.13.2
 
+# Appwrite (storage alongside Supabase, added 2026-08-29)
+# Pinned to 14.1.0 — server 1.7.4. SDK 15+ targets server 1.8+ and
+# emits version-mismatch warnings. SDK 13- is too old.
+# See packages/backend/src/saas/appwrite_client.py for the design
+# (storage-only, feature-flagged behind ENABLE_APPWRITE_STORAGE).
+appwrite==14.1.0
+
 # HTTP & API
 requests>=2.31.0
 httpx>=0.25.2
