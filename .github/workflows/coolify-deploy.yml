@@ -65,6 +65,11 @@ concurrency:
   group: coolify-deploy-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege: build needs read+packages+contents, deploy needs id-token for env
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   build:
     name: Build 3 Docker images
@@ -177,7 +182,7 @@ jobs:
             scp $tar ${COOLIFY_SSH_USER}@${COOLIFY_SSH_HOST}:/tmp/$(basename $tar)
           done
 
-      - name: SSH to host: docker load + tag
+      - name: "SSH to host: docker load + tag"
         if: ${{ inputs.with_scp }}
         env:
           COOLIFY_SSH_HOST: ${{ vars.COOLIFY_SSH_HOST || '169.58.147.169' }}

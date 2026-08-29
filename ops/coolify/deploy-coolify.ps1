@@ -127,7 +127,6 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "backend build failed" }
 
     Log "Building agentops image..."
-    $GhPat = $envMap['GITHUB_PAT_TOKEN']
     if (-not $GhPat) { throw 'GITHUB_PAT_TOKEN missing from .env (needed for private agentops repo)' }
     # Build the clone URL with PAT auth at runtime. The PAT prefix is split so
     # no single literal in the source resembles a credentialed URL (the
@@ -205,14 +204,26 @@ function Coolify-Start {
     if (-not $Uuid) { Log "Skipping $Name (no uuid configured)", 'WARN'; return }
     Log "Triggering Coolify deploy for $Name ($Uuid)..."
     $body = '{}'
-    try {
-        $r = Invoke-RestMethod -Uri "$CoolifyBase/api/v1/services/$Uuid/start" `
-            -Headers @{ Authorization = "Bearer $CoolifyToken" } `
-            -Method POST -TimeoutSec 30 -ContentType 'application/json' -Body $body
-        Log "  -> $($r.message)"
-    } catch {
-        Log "  -> ERROR: $($_.Exception.Message)", 'ERROR'
-        throw
+    $attempt = 0
+    $maxAttempts = 3
+    while ($true) {
+        $attempt++
+        try {
+            $r = Invoke-RestMethod -Uri "$CoolifyBase/api/v1/services/$Uuid/start" `
+                -Headers @{ Authorization = "Bearer $CoolifyToken" } `
+                -Method POST -TimeoutSec 30 -ContentType 'application/json' -Body $body
+            Log "  -> $($r.message)"
+            return
+        } catch {
+            $code = $_.Exception.Response.StatusCode.value__
+            $msg = $_.Exception.Message
+            if ($attempt -ge $maxAttempts -or ($code -and $code -lt 500)) {
+                Log "  -> ERROR (attempt $attempt/$maxAttempts, http=$code): $msg", 'ERROR'
+                throw
+            }
+            Log "  -> retry $attempt/$maxAttempts (http=$code): $msg", 'WARN'
+            Start-Sleep -Seconds (5 * $attempt)
+        }
     }
 }
 
@@ -224,20 +235,28 @@ function Test-Health {
     param([string]$Name, [string]$Url, [int]$TimeoutSec)
     Log "Polling $Name at $Url (timeout ${TimeoutSec}s)..."
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    $lastErr = $null
+    $attempt = 0
     while ((Get-Date) -lt $deadline) {
+        $attempt++
         try {
             $r = Invoke-WebRequest -Uri $Url -TimeoutSec 8 -UseBasicParsing
             if ($r.StatusCode -eq 200) {
-                Log "  $Name HEALTHY (200, $($r.Content.Length) bytes)"
+                Log "  $Name HEALTHY (200, $($r.Content.Length) bytes, attempt $attempt)"
                 $r.Content | Out-String | Select-Object -First 1 | ForEach-Object { Log "    body: $_" }
                 return $true
             }
+            $lastErr = "HTTP $($r.StatusCode)"
         } catch {
-            # keep polling
+            $lastErr = $_.Exception.Message
+            # log every 10th attempt so we can see what's happening without spam
+            if ($attempt % 10 -eq 1) {
+                Log "    still waiting ($attempt, last: $($lastErr.Substring(0, [Math]::Min(80, $lastErr.Length))))"
+            }
         }
         Start-Sleep -Seconds 5
     }
-    Log "  $Name FAILED to become healthy within ${TimeoutSec}s", 'ERROR'
+    Log "  $Name FAILED to become healthy within ${TimeoutSec}s (last: $lastErr)", 'ERROR'
     return $false
 }
 
