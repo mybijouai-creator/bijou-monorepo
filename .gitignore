@@ -10,6 +10,8 @@
 *.env.staging
 *.env.flyio
 *.env.composio
+# Appwrite dev-creds file (added 2026-08-29 — has the live `standard_…` server key)
+settings.json
 
 # Raw credential files written by ops scripts (fly/vercel/supabase tokens).
 # These are live deploy credentials — never tracked.
