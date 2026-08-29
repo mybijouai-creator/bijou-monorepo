@@ -1,4 +1,4 @@
-# validate-local.ps1 - Coolify deploy dry-run for Bijou AI
+﻿# validate-local.ps1 - Coolify deploy dry-run for Bijou AI
 #
 # Purpose: prove that `docker-compose.coolify.yml` parses, the build
 # contexts work, the env-file is complete, and the resulting images

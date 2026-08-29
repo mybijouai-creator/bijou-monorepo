@@ -1,4 +1,4 @@
-# migrate-secrets-to-coolify.ps1 — Populate a Coolify env group from a
+﻿# migrate-secrets-to-coolify.ps1 — Populate a Coolify env group from a
 # local .env file. Optionally mirror the same values to Infisical.
 #
 # This is step 2 in the cutover sequence. See

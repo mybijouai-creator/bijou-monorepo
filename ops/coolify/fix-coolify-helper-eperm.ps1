@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Fixes the Coolify helper "spawn EPERM" bug on /var/run/docker.sock
     and verifies Coolify is healthy again.

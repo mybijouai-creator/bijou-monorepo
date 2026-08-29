@@ -1,4 +1,4 @@
-# preflight-check.ps1 — Validate the user's setup BEFORE the Bijou
+﻿# preflight-check.ps1 — Validate the user's setup BEFORE the Bijou
 # Coolify cutover. Catches the 4 most common "I'm stuck" failure
 # modes before they cost 30 minutes of debugging.
 #

@@ -1,0 +1,15 @@
+# Force PowerShell scripts to use CRLF — PowerShell 5.1 on Windows silently
+# breaks when .ps1 files have LF-only endings (skips lines after function
+# definitions, leaving downstream variables undefined). Discovered 2026-08-30
+# in ops/coolify/smoke-test-prod.ps1 — every URL passed to Check was just
+# the path, because the $baseNoSlash assignment + smoke-test body were
+# silently skipped by the parser.
+*.ps1    text eol=crlf
+*.psm1   text eol=crlf
+
+# Shell scripts default to LF — they run on Linux/macOS, not Windows.
+*.sh     text eol=lf
+
+# Workflow YAML — keep as-is, no transformation.
+*.yml    text
+*.yaml   text

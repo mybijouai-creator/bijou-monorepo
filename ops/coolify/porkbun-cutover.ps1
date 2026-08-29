@@ -1,4 +1,4 @@
-# porkbun-cutover.ps1 — Flip a DNS record (or a whole set) from the
+﻿# porkbun-cutover.ps1 — Flip a DNS record (or a whole set) from the
 # Fly.io value to the Coolify value via the Porkbun API.
 #
 # This is the destructive step in the cutover. See

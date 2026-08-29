@@ -1,4 +1,4 @@
-# coolify-volume-snapshot.ps1 — Manage a Coolify service's persistent
+﻿# coolify-volume-snapshot.ps1 — Manage a Coolify service's persistent
 # volume: stop/start the service, snapshot the volume contents, and
 # surface the on-host path so the bridge-cutover runbook can rsync
 # data in.

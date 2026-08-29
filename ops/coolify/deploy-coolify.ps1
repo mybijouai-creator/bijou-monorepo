@@ -1,4 +1,4 @@
-# deploy-coolify.ps1 — full cutover orchestrator
+﻿# deploy-coolify.ps1 — full cutover orchestrator
 #
 # What it does, in order:
 #   1. Load .env for Coolify API token + service UUIDs

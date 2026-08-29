@@ -1,4 +1,4 @@
-# wire-coolify.ps1 — Wire the Bijou project into a Coolify instance
+﻿# wire-coolify.ps1 — Wire the Bijou project into a Coolify instance
 # and add the manual GitHub webhook that triggers auto-deploys.
 #
 # This is the first script in the cutover sequence. See

@@ -1,4 +1,4 @@
-# push-to-canonical.ps1 — Push local commits to
+﻿# push-to-canonical.ps1 — Push local commits to
 # mybijouai-creator/bijou-monorepo using the right auth.
 #
 # The local repo's `origin` remote is multi-URL (both mnjbold and
