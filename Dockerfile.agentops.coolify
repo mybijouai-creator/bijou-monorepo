@@ -1,0 +1,36 @@
+# Self-contained Dockerfile for agentops-dashboard on Coolify
+# Coolify 4.3.14 dockerfile build pack: build context is the Dockerfile itself (2B),
+# not the git clone. So we clone the repo at build time, then COPY from the clone
+# and use the real Dockerfile logic.
+FROM python:3.12-slim AS source-clone
+ARG AGENTOPS_REPO_URL=https://github.com/mybijouai-creator/agentops-platform.git
+ARG AGENTOPS_REPO_REF=main
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git clone --depth 1 --branch ${AGENTOPS_REPO_REF} ${AGENTOPS_REPO_URL} /src/repo
+
+# Now use the real Dockerfile in /backend/Dockerfile
+FROM python:3.12-slim
+LABEL org.opencontainers.image.source="https://github.com/mybijouai-creator/agentops-platform"
+LABEL org.opencontainers.image.description="agentops webhook + dashboard API (FastAPI)"
+
+# Install OS deps for healthcheck + sqlite
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements first for cacheable pip install
+COPY --from=source-clone /src/repo/backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy the rest of the backend from the clone
+COPY --from=source-clone /src/repo/backend /app
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8080/api/state >/dev/null || exit 1
+
+ENV PORT=8080 PYTHONUNBUFFERED=1
+EXPOSE 8080
+CMD ["python", "-m", "webhooks.server", "--host", "0.0.0.0", "--port", "8080"]
