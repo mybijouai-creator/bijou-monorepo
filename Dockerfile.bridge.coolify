@@ -36,7 +36,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/bridge .
 # Final stage: distroless static for security + tiny size (~15 MB)
 FROM gcr.io/distroless/static:nonroot
 
-WORKDIR /app
+# Use /data as WORKDIR (the Coolify-mounted persistent volume). The
+# whatsmeow sqlstore defaults to a relative path "store/whatsapp.db",
+# so by setting WORKDIR to /data the SQLite file lands on the volume
+# and survives restarts. Without this the bridge tries to mkdir in
+# the read-only /app (distroless + nonroot = permission denied), which
+# was the original runtime crash.
+WORKDIR /data
 COPY --from=builder /out/bridge /app/bridge
 
 # Each tenant gets its own bridge instance with its own SQLite db
