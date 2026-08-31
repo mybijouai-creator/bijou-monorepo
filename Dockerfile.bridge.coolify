@@ -33,26 +33,34 @@ RUN go mod download
 COPY --from=source-clone /src/repo/packages/bridge/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/bridge .
 
-# Final stage: distroless static for security + tiny size (~15 MB)
-FROM gcr.io/distroless/static:nonroot
+# Final stage: alpine (not distroless) so we can chown the persistent
+# volume to the runtime user at build time. The previous distroless
+# image had a nonroot user (uid 65532) but the Coolify-mounted /data
+# volume is owned by root, so the nonroot user couldn't create
+# subdirectories or write to it. The bridge then crashed on every
+# startup with mkdir permission errors.
+#
+# alpine is ~5 MB, supports chmod/chown at build time, and runs
+# the binary as a non-root user via `adduser -D` (which assigns
+# uid 1000 to avoid the same root-volume permission problem).
+FROM alpine:3.20
 
-# Use /data as WORKDIR (the Coolify-mounted persistent volume). The
-# whatsmeow sqlstore defaults to a relative path "store/whatsapp.db",
-# so by setting WORKDIR to /data the SQLite file lands on the volume
-# and survives restarts. Without this the bridge tries to mkdir in
-# the read-only /app (distroless + nonroot = permission denied), which
-# was the original runtime crash.
+# Install ca-certificates (for HTTPS webhook calls) and create the
+# non-root runtime user. alpine ships with adduser and chmod so this
+# is straightforward.
+RUN apk add --no-cache ca-certificates tzdata \
+    && adduser -D -u 1000 -G root bridge \
+    && mkdir -p /data/store /data/logs \
+    && chown -R 1000:1000 /data
+
 WORKDIR /data
 COPY --from=builder /out/bridge /app/bridge
+RUN chmod 0755 /app/bridge
 
-# Each tenant gets its own bridge instance with its own SQLite db
-# mounted as a Coolify persistent volume at /data.
 VOLUME ["/data"]
 ENV DB_PATH=/data/bridge.db
 
 EXPOSE 8080
 
-# Health check - hit /health endpoint on the bridge
-USER nonroot:nonroot
-
+USER 1000:1000
 ENTRYPOINT ["/app/bridge"]
