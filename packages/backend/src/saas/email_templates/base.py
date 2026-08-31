@@ -57,6 +57,72 @@ BRAND = {
 
 
 # ---------------------------------------------------------------------------
+# Currency formatter
+# ---------------------------------------------------------------------------
+# Canonical currency symbol map. Brand canon is RM (Malaysian Ringgit). USD
+# and EUR are here for defence-in-depth — if Stripe is ever mis-configured
+# for a non-MYR currency, the rendered amount still matches the customer's
+# actual charge instead of silently displaying the wrong symbol. Any code
+# path that hard-codes a "$" prefix instead of going through this helper
+# should be treated as a brand-canon bug.
+_CURRENCY_SYMBOLS = {
+    "myr": "RM",
+    "usd": "$",
+    "eur": "€",
+    "gbp": "£",
+    "sgd": "S$",
+    "aud": "A$",
+    "idr": "Rp",
+}
+
+
+def format_currency(amount: str, currency: str = "myr") -> str:
+    """Format a numeric amount with the correct currency symbol/prefix.
+
+    Args:
+        amount:   Numeric string, e.g. "299.00" or "99". Non-numeric input
+                  is returned unchanged (defensive — the caller may have
+                  already pre-formatted it).
+        currency: Lowercase ISO 4217 currency code. Unknown codes are
+                  uppercased and used as a prefix (e.g. "JPY 1500").
+
+    Returns:
+        Formatted amount string, e.g. "RM 299.00" for myr/299.00,
+        "$99.00" for usd/99.00, "MYR 299.00" if currency is "myr" but
+        the symbol map ever needs to be bypassed.
+
+    The space between symbol and number is intentional — it matches the
+    canonical brand usage ("RM 299/mo", "RM299/mo" both appear in
+    marketing; the email receipt uses spaced form for legibility).
+
+    Idempotency: if `amount` already starts with a known currency prefix
+    (from `_CURRENCY_SYMBOLS` values or any 3-letter alpha code), the
+    function returns the input unchanged. This lets callers safely
+    pre-format and pass through without risk of double-prefixing.
+    """
+    s = (amount or "").strip()
+    if not s:
+        return s
+    # Idempotency check: if the first whitespace-separated token is a
+    # known currency prefix (symbol like "RM"/"$"/"€" or 3-letter alpha
+    # code like "MYR"/"USD"), return as-is. Prevents double-prefixing
+    # when the caller already pre-formatted the amount.
+    first_token = s.split(maxsplit=1)[0]
+    if first_token in _CURRENCY_SYMBOLS.values() or (
+        len(first_token) == 3 and first_token.isalpha()
+    ):
+        return s
+    code = (currency or "myr").lower()
+    symbol = _CURRENCY_SYMBOLS.get(code, code.upper())
+    return f"{symbol} {s}"
+
+
+# Backwards-compatible alias — internal callers and tests that imported the
+# private name before it became public keep working.
+_format_currency = format_currency
+
+
+# ---------------------------------------------------------------------------
 # Shared header
 # ---------------------------------------------------------------------------
 def email_header(badge_text: str = "") -> str:

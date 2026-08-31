@@ -25,6 +25,8 @@ Public API:
   cta_button(...)    — render a Signal Gem gold CTA
   divider            — horizontal divider row (str)
   support_row(...)   — "Need help?" contact block
+  format_currency(amount, currency="myr") — format a numeric amount with the
+                          correct currency symbol (RM for myr, $ for usd, etc.)
 
   # Transactional builders (the 10 specific email types)
   build_email_verification(name, verify_url, expiry_mins=30)
@@ -51,6 +53,7 @@ from .base import (
     cta_button,
     divider,
     support_row,
+    format_currency,
 )
 
 from .transactional import (
@@ -74,6 +77,7 @@ __all__ = [
     "cta_button",
     "divider",
     "support_row",
+    "format_currency",
     "build_email_verification",
     "build_welcome_trial_start",
     "build_trial_expiry_warning",

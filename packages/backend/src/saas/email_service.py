@@ -449,29 +449,65 @@ class EmailService:
         plan_name: str,
         amount: str,
         invoice_url: str,
+        *,
+        currency: str = "MYR",
+        invoice_id: str = "",
+        billing_date: str = "",
+        next_billing: str = "",
     ) -> bool:
-        """Send payment confirmation after a successful Stripe charge."""
+        """Send payment confirmation after a successful Stripe charge.
+
+        Args:
+            to:             Recipient email.
+            business_name:  Tenant's business name (used in the greeting).
+            plan_name:      Display name of the plan (e.g. "Pro", "Growth").
+            amount:         Pre-formatted amount string, e.g. "299.00". The
+                            currency prefix is added by this method from
+                            `currency` so the brand canon is respected.
+            invoice_url:    Stripe-hosted PDF URL (CTA button target).
+            currency:       Lowercase ISO currency code from Stripe
+                            (e.g. "myr", "usd"). Default "myr" matches the
+                            brand canon. If "myr", prefix with "RM"; if
+                            "usd", prefix with "$"; otherwise prefix with
+                            the uppercase currency code.
+            invoice_id:     Friendly invoice number (e.g. "BIJ-2026-001").
+                            Shown in the "Official Receipt" header. Falls
+                            back to the URL if empty (legacy behaviour).
+            billing_date:   Human-readable payment date, e.g. "30 Aug 2026".
+                            Empty = receipt row left blank.
+            next_billing:   Human-readable next-charge date. Empty = blank.
+
+        Notes:
+            Brand canon is RM only (see `email_templates/base.py` BRAND +
+            rebrand-progress.md 2026-07-26). The currency param is here for
+            defence-in-depth in case Stripe is ever mis-configured for a
+            non-MYR currency; the rendered amount then matches the
+            customer's actual charge instead of silently lying.
+        """
+        from .email_templates import format_currency as _fmt  # local import to avoid cycles
 
         subject = f"✅ Payment confirmed — Welcome to Bijou AI {plan_name}!"
 
-        # Delegate to the Signal Gem builder. invoice_id and date are
-        # positional, so we thread invoice_url into both slots for now —
-        # the JS template is flexible on these and the customer only ever
-        # cares about the download link.
+        display_amount = _fmt(amount, currency)
+        # If no friendly invoice id, fall back to the URL so the
+        # "Official Receipt" header isn't empty (the CTA button is separate).
+        receipt_number = invoice_id or invoice_url or "—"
+
         html_body = _build_payment_confirmation(
             name=business_name,
             plan=plan_name,
-            amount=amount,
-            invoice_id=invoice_url,
-            billing_date="",
-            next_billing="",
+            amount=display_amount,
+            invoice_id=receipt_number,
+            billing_date=billing_date,
+            next_billing=next_billing,
             invoice_url=invoice_url,
         )
 
         text_body = (
             f"Payment confirmed — Welcome to Bijou AI {plan_name}!\n\n"
             f"Hi {business_name}, your subscription is now active.\n"
-            f"Amount: {amount}\n"
+            f"Amount: {display_amount}\n"
+            f"Receipt: {receipt_number}\n"
             f"Download invoice: {invoice_url}\n\n"
             f"Open your dashboard: https://app.mybijou.xyz/dashboard"
         )

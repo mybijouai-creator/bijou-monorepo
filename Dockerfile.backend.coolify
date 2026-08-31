@@ -49,9 +49,27 @@ COPY --from=source-clone /src/repo/packages/backend/scripts /app/scripts/
 
 WORKDIR /app
 
-# Non-root user
-RUN useradd --create-home --shell /bin/bash bijou && chown -R bijou:bijou /app
-USER bijou
+# Create the persistent data dirs and chown to the runtime user BEFORE we
+# drop privileges. Otherwise the first write to /data/logs/ etc. fails
+# with PermissionError because the slim image's / is owned by root and
+# the runtime user can't create top-level dirs.
+#
+# The app also reads BIJOU_LOG_DIR (default /data/logs) and
+# BIJOU_DB_PATH (default /data/bijou.db). Creating the canonical layout
+# here means `volumes:` mounts in docker-compose / Coolify persist the
+# data, and the runtime never sees an unwritable /data.
+#
+# Note: VOLUME on /data is intentionally NOT declared here. Coolify
+# mounts a persistent volume at /data when configured; if we also
+# declared VOLUME here, docker build would create an anonymous volume
+# and the bind-mount would be shadowed.
+RUN mkdir -p /data/logs /data/tenants /data/whatsapp-session /data/store /data/uploads \
+    && chown -R 1000:1000 /data
+
+# Non-root user. We use uid 1000 directly (matching the chown above)
+# because `useradd` would require --no-log-init + --system to avoid
+# polluting /var/log on first start, and a numeric uid is simpler.
+USER 1000:1000
 
 EXPOSE 8080
 

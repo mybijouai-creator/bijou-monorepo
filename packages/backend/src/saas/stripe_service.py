@@ -228,12 +228,35 @@ class StripePaymentService:
                 # Send payment confirmation email
                 invoice = stripe.Invoice.retrieve(subscription.latest_invoice)
 
+                # Build the receipt metadata from the real Stripe objects so
+                # the email shows the right currency, friendly invoice number,
+                # and billing dates (not the hard-coded "$" + URL the old
+                # code passed in). See rebrand-progress.md 2026-08-30.
+                amount_str = f"{session.amount_total / 100:.2f}"
+                # Stripe's friendly invoice "number" (e.g. "BIJ-2026-001")
+                # is only populated when the dashboard's invoice-numbering
+                # prefix is set; fall back to the Stripe ID if blank.
+                receipt_number = ""
+                if invoice is not None:
+                    receipt_number = getattr(invoice, "number", "") or invoice.id
+                billing_date = (
+                    datetime.fromtimestamp(invoice.created).strftime("%d %b %Y")
+                    if invoice is not None else ""
+                )
+                next_billing = datetime.fromtimestamp(
+                    subscription.current_period_end
+                ).strftime("%d %b %Y")
+
                 self.email_service.send_payment_confirmation(
                     to=tenant["email"],
                     business_name=tenant["business_name"],
                     plan_name=plan_code.title(),
-                    amount=f"${session.amount_total / 100:.2f}",
-                    invoice_url=invoice.invoice_pdf if invoice else ""
+                    amount=amount_str,
+                    invoice_url=invoice.invoice_pdf if invoice else "",
+                    currency=session.currency,
+                    invoice_id=receipt_number,
+                    billing_date=billing_date,
+                    next_billing=next_billing,
                 )
 
                 # Send dashboard access email with direct link
