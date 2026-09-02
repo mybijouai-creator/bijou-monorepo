@@ -105,6 +105,14 @@ jobs:
           find . -name '*.cjs' -exec node --check {} +
           echo "PASS: all .cjs valid"
 
+      # NOTE: this MUST run before the static-HTML check below — that test
+      # parses dashboard.html's type="text/babel" JSX via @babel/parser,
+      # which only exists after this npm install. It previously sat after,
+      # so the check could only ever fail; it was masked because the ruff
+      # step above failed first and short-circuited the job.
+      - name: Node deps (for .cjs scripts that import npm packages)
+        run: npm install --no-audit --no-fund --no-save
+
       - name: Static HTML inline-JS syntax check (blocking)
         # 2026-08-22: login.html had a stray brace that broke its entire
         # inline <script> parse — invisible here because the step above only
@@ -116,9 +124,6 @@ jobs:
         run: |
           pip install -r requirements-dev.txt
           python -m pytest tests/unit/test_static_html_js_syntax.py -q
-
-      - name: Node deps (for .cjs scripts that import npm packages)
-        run: npm install --no-audit --no-fund --no-save
 
       # ───────────────────────────────────────────────────────────────
       # Tests. Added 2026-08-10 — this workflow previously ran NO tests
