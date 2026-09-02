@@ -15,7 +15,7 @@ Two user types:
 import logging
 import os
 import re
-from typing import List, Optional
+from typing import List, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException

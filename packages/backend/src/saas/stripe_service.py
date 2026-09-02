@@ -16,7 +16,7 @@ Version: 1.0.0
 import logging
 import os
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from uuid import UUID
 
 import stripe
