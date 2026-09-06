@@ -1,0 +1,137 @@
+# Dokploy docker-compose for Bijou AI — CORE SERVICES ONLY (backend + bridge)
+#
+# Scope (2026-09-06 decision): this stack intentionally does NOT include
+# voice or Langfuse — those stay off until turned on deliberately. Landing
+# stays on Vercel's native git integration. The database of record stays
+# Supabase — nothing here stands up Postgres for app data.
+#
+# Staging-first rollout: deploy this under a staging/preview domain,
+# confirm health, THEN point production DNS (app.mybijou.xyz, bridge.*)
+# at it and only then retire the Coolify host. Do not point production
+# domains at this stack until told to.
+#
+# To use in Dokploy:
+#   1. Dokploy UI -> Project -> "+ Create Service" -> "Compose"
+#   2. Source: GitHub (mybijouai-creator/bijou-monorepo), via Dokploy's
+#      native GitHub App integration (not a manual PAT)
+#   3. Branch: the staging branch this file ships on (see PR)
+#   4. Compose Path: docker-compose.dokploy.yml   (Base Directory: /)
+#   5. Environment tab: paste the env block prepared alongside this file.
+#      Real secret VALUES are never committed here — every value below
+#      is a placeholder resolved from the Dokploy environment.
+#   6. Domains tab (per service): backend -> container port 8080,
+#      bridge -> container port 8080. Use a Dokploy-generated preview
+#      domain for staging; do not use the production hostnames yet.
+#   7. Enable "Auto Deploy" so pushes to the staging branch redeploy.
+#
+# No top-level `version:` key — obsolete since Compose v2.
+
+x-common-env: &common-env
+  # Supabase (shared across backend + bridge's calls back to backend)
+  SUPABASE_URL: "${SUPABASE_URL:?required}"
+  SUPABASE_SERVICE_KEY: "${SUPABASE_SERVICE_KEY:?required}"
+  # Google AI
+  GEMINI_API_KEY: "${GEMINI_API_KEY:?required}"
+  # Canonical public URL — STAGING value while parallel-testing; flip to
+  # https://app.mybijou.xyz only at actual cutover time.
+  PUBLIC_URL: "${PUBLIC_URL:?required}"
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+  SENTRY_DSN: "${SENTRY_DSN:-}"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: bijou-backend:dokploy
+    container_name: bijou-backend-dokploy
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      <<: *common-env
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:?required}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:?required}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      CALCOM_CLIENT_ID: "${CALCOM_CLIENT_ID:-}"
+      CALCOM_CLIENT_SECRET: "${CALCOM_CLIENT_SECRET:-}"
+      NANGO_SECRET_KEY: "${NANGO_SECRET_KEY:-}"
+      LANGFUSE_ENABLED: "false"
+      ENABLE_COMPOSIO: "false"
+    volumes:
+      - backend-uploads:/app/uploads
+    healthcheck:
+      # Comprehensive self-test, not the trivial /health — 503 here should
+      # block Dokploy from marking the deploy healthy.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/self-test/summary"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge
+    image: bijou-bridge:dokploy
+    container_name: bijou-bridge-dokploy
+    restart: unless-stopped
+    # STAGING FIX (2026-09-06): Dockerfile.bridge runs as distroless
+    # `nonroot` (UID 65532), but Docker seeds the fresh `bridge-data` named
+    # volume (and the image's own /app dir) as root:root 0755 — nonroot
+    # can read but not write, so SQLite failed to open both /data/bridge.db
+    # and the whatsmeow session store under /app/store with a misleading
+    # "unable to open database file: out of memory (14)" (that's SQLite's
+    # generic label for SQLITE_CANTOPEN, not an actual memory error).
+    # Running as root here is a pragmatic staging-only workaround; the
+    # correct long-term fix is chown'ing /data to 65532:65532 at build time
+    # in Dockerfile.bridge (via the builder stage, since the distroless
+    # final stage has no shell) and re-adding `USER nonroot:nonroot`.
+    user: "0:0"
+    expose:
+      - "8080"
+    environment:
+      <<: *common-env
+      BRIDGE_URL: "http://bridge:8080"
+      DB_PATH: "/data/bridge.db"
+      # NOTE: WHATSAPP_SESSION_PATH is not read anywhere in
+      # packages/bridge/main.go — the whatsmeow session store is
+      # hardcoded to "store/whatsapp.db" relative to the container's
+      # CWD (/app), which is NOT on the bridge-data volume, so it does
+      # NOT survive a container restart/redeploy (WhatsApp sessions will
+      # require re-scanning the QR code every time). The one built-in
+      # override is WHATSAPP_DB_URL, but only when it's a postgres:// URL
+      # (falls back to the ephemeral SQLite path otherwise). If durable
+      # WhatsApp sessions matter for staging, point WHATSAPP_DB_URL at
+      # Supabase's Postgres connection string (paste it directly in
+      # Dokploy's Environment tab, never here) rather than treating this
+      # as solved by a volume mount.
+      BIJOU_BACKEND_URL: "http://backend:8080"
+      BIJOU_BACKEND_API_KEY: "${BRIDGE_API_KEY:?required}"
+    volumes:
+      - bridge-data:/data
+    # No container-level healthcheck: the distroless nonroot base has no
+    # shell/curl/wget to run one, and the binary has no --health-check
+    # flag (that was a fabricated test in an earlier draft of this file —
+    # `/app/bridge --health-check` just launches a second full server
+    # instance, which is why Docker reported "unhealthy" once the
+    # SQLite/volume-permission bug above was fixed). The app does expose
+    # a real GET /health, verify it externally instead, e.g.:
+    #   curl http://<bridge-domain>/health
+    # A proper fix is a lightweight `--health-check` mode in
+    # packages/bridge/main.go that self-GETs :8080/health and exits
+    # 0/1 (still no shell required, since it'd be in the static binary).
+    depends_on:
+      - backend
+
+volumes:
+  backend-uploads:
+    driver: local
+  bridge-data:
+    driver: local
