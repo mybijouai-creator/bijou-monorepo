@@ -100,17 +100,33 @@ services:
       <<: *common-env
       BRIDGE_URL: "http://bridge:8080"
       DB_PATH: "/data/bridge.db"
-      WHATSAPP_SESSION_PATH: "/data/whatsapp-session"
+      # NOTE: WHATSAPP_SESSION_PATH is not read anywhere in
+      # packages/bridge/main.go — the whatsmeow session store is
+      # hardcoded to "store/whatsapp.db" relative to the container's
+      # CWD (/app), which is NOT on the bridge-data volume, so it does
+      # NOT survive a container restart/redeploy (WhatsApp sessions will
+      # require re-scanning the QR code every time). The one built-in
+      # override is WHATSAPP_DB_URL, but only when it's a postgres:// URL
+      # (falls back to the ephemeral SQLite path otherwise). If durable
+      # WhatsApp sessions matter for staging, point WHATSAPP_DB_URL at
+      # Supabase's Postgres connection string (paste it directly in
+      # Dokploy's Environment tab, never here) rather than treating this
+      # as solved by a volume mount.
       BIJOU_BACKEND_URL: "http://backend:8080"
       BIJOU_BACKEND_API_KEY: "${BRIDGE_API_KEY:?required}"
     volumes:
       - bridge-data:/data
-    healthcheck:
-      test: ["CMD", "/app/bridge", "--health-check"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    # No container-level healthcheck: the distroless nonroot base has no
+    # shell/curl/wget to run one, and the binary has no --health-check
+    # flag (that was a fabricated test in an earlier draft of this file —
+    # `/app/bridge --health-check` just launches a second full server
+    # instance, which is why Docker reported "unhealthy" once the
+    # SQLite/volume-permission bug above was fixed). The app does expose
+    # a real GET /health, verify it externally instead, e.g.:
+    #   curl http://<bridge-domain>/health
+    # A proper fix is a lightweight `--health-check` mode in
+    # packages/bridge/main.go that self-GETs :8080/health and exits
+    # 0/1 (still no shell required, since it'd be in the static binary).
     depends_on:
       - backend
 
