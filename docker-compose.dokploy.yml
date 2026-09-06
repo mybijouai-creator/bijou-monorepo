@@ -1,0 +1,109 @@
+# Dokploy docker-compose for Bijou AI — CORE SERVICES ONLY (backend + bridge)
+#
+# Scope (2026-09-06 decision): this stack intentionally does NOT include
+# voice or Langfuse — those stay off until turned on deliberately. Landing
+# stays on Vercel's native git integration. The database of record stays
+# Supabase — nothing here stands up Postgres for app data.
+#
+# Staging-first rollout: deploy this under a staging/preview domain,
+# confirm health, THEN point production DNS (app.mybijou.xyz, bridge.*)
+# at it and only then retire the Coolify host. Do not point production
+# domains at this stack until told to.
+#
+# To use in Dokploy:
+#   1. Dokploy UI -> Project -> "+ Create Service" -> "Compose"
+#   2. Source: GitHub (mybijouai-creator/bijou-monorepo), via Dokploy's
+#      native GitHub App integration (not a manual PAT)
+#   3. Branch: the staging branch this file ships on (see PR)
+#   4. Compose Path: docker-compose.dokploy.yml   (Base Directory: /)
+#   5. Environment tab: paste the env block prepared alongside this file.
+#      Real secret VALUES are never committed here — every value below
+#      is a placeholder resolved from the Dokploy environment.
+#   6. Domains tab (per service): backend -> container port 8080,
+#      bridge -> container port 8080. Use a Dokploy-generated preview
+#      domain for staging; do not use the production hostnames yet.
+#   7. Enable "Auto Deploy" so pushes to the staging branch redeploy.
+#
+# No top-level `version:` key — obsolete since Compose v2.
+
+x-common-env: &common-env
+  # Supabase (shared across backend + bridge's calls back to backend)
+  SUPABASE_URL: "${SUPABASE_URL:?required}"
+  SUPABASE_SERVICE_KEY: "${SUPABASE_SERVICE_KEY:?required}"
+  # Google AI
+  GEMINI_API_KEY: "${GEMINI_API_KEY:?required}"
+  # Canonical public URL — STAGING value while parallel-testing; flip to
+  # https://app.mybijou.xyz only at actual cutover time.
+  PUBLIC_URL: "${PUBLIC_URL:?required}"
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+  SENTRY_DSN: "${SENTRY_DSN:-}"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: bijou-backend:dokploy
+    container_name: bijou-backend-dokploy
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      <<: *common-env
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:?required}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:?required}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      CALCOM_CLIENT_ID: "${CALCOM_CLIENT_ID:-}"
+      CALCOM_CLIENT_SECRET: "${CALCOM_CLIENT_SECRET:-}"
+      NANGO_SECRET_KEY: "${NANGO_SECRET_KEY:-}"
+      LANGFUSE_ENABLED: "false"
+      ENABLE_COMPOSIO: "false"
+    volumes:
+      - backend-uploads:/app/uploads
+    healthcheck:
+      # Comprehensive self-test, not the trivial /health — 503 here should
+      # block Dokploy from marking the deploy healthy.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/self-test/summary"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge
+    image: bijou-bridge:dokploy
+    container_name: bijou-bridge-dokploy
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      <<: *common-env
+      BRIDGE_URL: "http://bridge:8080"
+      BRIDGE_DB_PATH: "/data/bridge.db"
+      WHATSAPP_SESSION_PATH: "/data/whatsapp-session"
+      BIJOU_BACKEND_URL: "http://backend:8080"
+      BIJOU_BACKEND_API_KEY: "${BRIDGE_API_KEY:?required}"
+    volumes:
+      - bridge-data:/data
+    healthcheck:
+      test: ["CMD", "/app/bridge", "--health-check"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - backend
+
+volumes:
+  backend-uploads:
+    driver: local
+  bridge-data:
+    driver: local
