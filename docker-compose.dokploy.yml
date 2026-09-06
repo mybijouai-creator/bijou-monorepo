@@ -82,12 +82,24 @@ services:
     image: bijou-bridge:dokploy
     container_name: bijou-bridge-dokploy
     restart: unless-stopped
+    # STAGING FIX (2026-09-06): Dockerfile.bridge runs as distroless
+    # `nonroot` (UID 65532), but Docker seeds the fresh `bridge-data` named
+    # volume (and the image's own /app dir) as root:root 0755 — nonroot
+    # can read but not write, so SQLite failed to open both /data/bridge.db
+    # and the whatsmeow session store under /app/store with a misleading
+    # "unable to open database file: out of memory (14)" (that's SQLite's
+    # generic label for SQLITE_CANTOPEN, not an actual memory error).
+    # Running as root here is a pragmatic staging-only workaround; the
+    # correct long-term fix is chown'ing /data to 65532:65532 at build time
+    # in Dockerfile.bridge (via the builder stage, since the distroless
+    # final stage has no shell) and re-adding `USER nonroot:nonroot`.
+    user: "0:0"
     expose:
       - "8080"
     environment:
       <<: *common-env
       BRIDGE_URL: "http://bridge:8080"
-      BRIDGE_DB_PATH: "/data/bridge.db"
+      DB_PATH: "/data/bridge.db"
       WHATSAPP_SESSION_PATH: "/data/whatsapp-session"
       BIJOU_BACKEND_URL: "http://backend:8080"
       BIJOU_BACKEND_API_KEY: "${BRIDGE_API_KEY:?required}"
